@@ -21,6 +21,7 @@ preview.err
 .commit-msg
 .commitmsg.tmp
 .research/
+state/
 
 # The vendor proof-of-work module is downloaded, not distributed.
 # Get it with: node plugins/deepseek-web-chat/scripts/fetch-wasm.mjs
