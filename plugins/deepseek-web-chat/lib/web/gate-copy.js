@@ -180,6 +180,8 @@ export const UI_COPY = {
     dshHiddenEmpty: '另有 {n} 个还没聊过的空会话，已隐藏',
     dshNoMatch: '没有匹配的会话',
     dshSize: '{size} KB',
+    dshKeptOfTotal: '{kept} / {total} 条',
+    dshOnlyRecent: '只附最近 {kept} 条',
     // toasts
     alreadyInContext: '这个内容已经在上下文里了',
     transcriptNotice: '会话原文会作为上下文发给 chat.deepseek.com',
@@ -257,6 +259,8 @@ export const UI_COPY = {
     dshHiddenEmpty: '{n} unused empty conversations hidden',
     dshNoMatch: 'No matching conversation',
     dshSize: '{size} KB',
+    dshKeptOfTotal: '{kept} of {total} entries',
+    dshOnlyRecent: 'the latest {kept} only',
     alreadyInContext: 'That is already in the context',
     transcriptNotice: 'The conversation text will be sent to chat.deepseek.com as context',
     signedOutFirst: 'Sign in to chat.deepseek.com first',

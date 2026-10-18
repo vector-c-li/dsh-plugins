@@ -16,7 +16,10 @@ import {
   EXCERPT_CHARS,
   EXCERPT_LINES,
   PREVIEW_CHARS,
+  ENTRY_CLIP,
+  MAX_TURNS,
   excerptOf,
+  foldTranscript,
   pickerRow,
   previewOf,
   readCachedTitle,
@@ -136,6 +139,94 @@ await check('a picker with only empty sessions yields no rows', async () => {
   const { rows, hidden } = visibleRows([{ id: 'a', messages: 0 }]);
   assert.equal(rows.length, 0);
   assert.equal(hidden, 1);
+});
+
+/* ---------------------------------------------------------------- folding */
+
+const userEvent = (text) => ({ type: 'user/message', data: { content: [{ type: 'text', text }] } });
+const assistantEvent = (text, tools = []) => ({
+  type: 'assistant/message',
+  data: { message: { content: [{ type: 'text', text }, ...tools.map((name) => ({ type: 'tool-call', name }))] } },
+});
+
+await check('consecutive assistant steps fold into one entry with a tool tally', async () => {
+  const folded = foldTranscript([
+    userEvent('do the thing'),
+    assistantEvent('step one', ['pwsh']),
+    assistantEvent('step two', ['pwsh', 'read']),
+    userEvent('thanks'),
+    assistantEvent('done'),
+  ]);
+  assert.equal(folded.total, 4);
+  assert.equal(folded.lines[0], '用户: do the thing');
+  assert.match(folded.lines[1], /^助手: step one\nstep two/u);
+  assert.match(folded.lines[1], /本回合使用了 3 次工具：pwsh×2, read/u);
+  assert.equal(folded.lines[2], '用户: thanks');
+  assert.equal(folded.lines[3], '助手: done');
+});
+
+await check('reasoning blocks never reach the transcript', async () => {
+  const folded = foldTranscript([
+    { type: 'user/message', data: { content: [{ type: 'text', text: 'q' }] } },
+    { type: 'assistant/message', data: { message: { content: [{ type: 'reasoning', text: 'scratchpad' }, { type: 'text', text: 'answer' }] } } },
+  ]);
+  assert.equal(folded.lines.join('\n').includes('scratchpad'), false);
+  assert.equal(folded.lines[1], '助手: answer');
+});
+
+await check('empty user messages and tool-only steps without prose are dropped', async () => {
+  const folded = foldTranscript([
+    userEvent(''),
+    { type: 'assistant/message', data: { message: { content: [{ type: 'tool-call', name: 'read' }] } } },
+    userEvent('real question'),
+  ]);
+  assert.equal(folded.total, 2);
+  assert.equal(folded.lines[0], '助手: （本回合使用了 1 次工具：read）');
+  assert.equal(folded.lines[1], '用户: real question');
+});
+
+await check('one entry is clipped at the documented limit and says so', async () => {
+  const folded = foldTranscript([userEvent('x'.repeat(ENTRY_CLIP + 50))]);
+  assert.equal(folded.lines[0].length, '用户: '.length + ENTRY_CLIP + '…（已截断）'.length);
+  assert.equal(folded.lines[0].endsWith('…（已截断）'), true);
+});
+
+await check('the cap keeps the newest entries and reports the total', async () => {
+  const events = [];
+  for (let index = 0; index < MAX_TURNS + 19; index += 1) {
+    events.push(userEvent(`question ${index}`));
+    events.push(assistantEvent(`answer ${index}`));
+  }
+  const folded = foldTranscript(events);
+  assert.equal(folded.total, 118);
+  assert.equal(folded.kept, MAX_TURNS);
+  assert.equal(folded.truncated, true);
+  assert.equal(folded.lines.length, MAX_TURNS);
+  // Only the tail survives.
+  assert.match(folded.lines.at(-1), /answer 58/u);
+  assert.equal(folded.lines[0].includes('question 0'), false);
+});
+
+await check('a short conversation is not marked truncated', async () => {
+  const folded = foldTranscript([userEvent('q'), assistantEvent('a')]);
+  assert.equal(folded.truncated, false);
+  assert.equal(folded.total, 2);
+  assert.equal(folded.first, 'q');
+  assert.equal(folded.last, 'a');
+});
+
+await check('no messages at all yields no lines', async () => {
+  const folded = foldTranscript([{ type: 'step/start' }]);
+  assert.equal(folded.total, 0);
+  assert.equal(folded.lines.length, 0);
+  assert.equal(folded.first, null);
+});
+
+await check('a row reports kept, total and the truncation flag', async () => {
+  const row = pickerRow({ id: 'x', cached: 'T', messages: 59, kept: 40, truncated: true, bytes: 100 });
+  assert.equal(row.messages, 59);
+  assert.equal(row.kept, 40);
+  assert.equal(row.truncated, true);
 });
 
 console.log(failures === 0 ? '\nDSH session picker checks passed' : `\n${failures} check(s) failed`);

@@ -721,6 +721,7 @@ ol.sources a:hover { text-decoration: underline; }
   overflow: hidden;
 }
 .session-main .p em { color: var(--dsw-text-3); font-style: normal; margin-right: 4px; }
+.session-main .cap { font-size: 10px; color: var(--dsw-warn, var(--dsw-text-3)); }
 .session-main:hover .t { color: var(--dsw-accent); }
 .session-side { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .session-toggle { font-size: 11px; padding: 2px 8px; }

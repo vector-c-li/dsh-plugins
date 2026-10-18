@@ -92,6 +92,100 @@ function clip(text, limit) {
 export const EXCERPT_LINES = 4;
 export const EXCERPT_CHARS = 240;
 
+/** Longest one transcript entry may be, and how many entries are kept. */
+export const ENTRY_CLIP = 4000;
+export const MAX_TURNS = 40;
+
+/**
+ * Split one message's blocks into prose and the names of the tools it called.
+ * Reasoning blocks are deliberately dropped: they are the model's scratchpad, and
+ * including them would triple the prompt size for no context value.
+ * @param {unknown} content
+ */
+export function blocksToContent(content) {
+  if (!Array.isArray(content)) return { text: '', tools: [] };
+  const texts = [];
+  const tools = [];
+  for (const block of content) {
+    if (block?.type === 'text' && typeof block.text === 'string') texts.push(block.text);
+    else if (block?.type === 'tool-call' && typeof block.name === 'string') tools.push(block.name);
+  }
+  return { text: texts.join('\n'), tools };
+}
+
+/** Fold a turn's tool calls into one readable note. */
+export function summarizeTools(tools) {
+  if (tools.length === 0) return '';
+  const counts = new Map();
+  for (const name of tools) counts.set(name, (counts.get(name) ?? 0) + 1);
+  const parts = [...counts].map(([name, count]) => (count > 1 ? `${name}×${count}` : name));
+  return `（本回合使用了 ${tools.length} 次工具：${parts.join(', ')}）`;
+}
+
+/** Cut one entry, marking that it was cut rather than silently losing text. */
+function clipEntry(text, max) {
+  return text.length <= max ? text : `${text.slice(0, max)}…（已截断）`;
+}
+
+/**
+ * Turn raw session events into transcript lines.
+ *
+ * A DSH turn emits one `assistant/message` per step, so a turn with a dozen tool
+ * calls would contribute a dozen entries; consecutive assistant steps are folded
+ * into one, with their tool calls tallied into a single line. Only then does the
+ * `maxTurns` cap apply — it counts **entries**, not raw messages, and it keeps the
+ * tail (the newest context).
+ *
+ * `total` is how many entries existed, `kept` how many survived the cap, so a UI
+ * can say "40 of 59" instead of claiming 40 is the whole conversation.
+ *
+ * @param {Array<{type?: string, data?: object}>} events
+ * @param {{maxTurns?: number, clip?: number}} [options]
+ * @returns {{entries: number, total: number, kept: number, truncated: boolean, lines: string[], first: string|null, last: string|null}}
+ */
+export function foldTranscript(events, { maxTurns = MAX_TURNS, clip = ENTRY_CLIP } = {}) {
+  const folded = [];
+  for (const event of Array.isArray(events) ? events : []) {
+    if (event?.type !== 'user/message' && event?.type !== 'assistant/message') continue;
+    const content = event.data?.message?.content ?? event.data?.content;
+    const { text, tools } = blocksToContent(content);
+    if (event.type === 'user/message') {
+      if (text.length === 0) continue;
+      folded.push({ role: '用户', texts: [text], tools: [] });
+      continue;
+    }
+    const last = folded.at(-1);
+    if (last !== undefined && last.role === '助手') {
+      if (text.length > 0) last.texts.push(text);
+      last.tools.push(...tools);
+    } else {
+      folded.push({ role: '助手', texts: text.length > 0 ? [text] : [], tools: [...tools] });
+    }
+  }
+
+  const lines = [];
+  for (const entry of folded) {
+    const prose = entry.texts.join('\n').trim();
+    const toolNote = summarizeTools(entry.tools);
+    const body = [prose, toolNote].filter((part) => part.length > 0).join('\n');
+    if (body.length === 0) continue;
+    lines.push(`${entry.role}: ${clipEntry(body, clip)}`);
+  }
+
+  const keptLines = lines.slice(-maxTurns);
+  const firstAsk = folded.find((entry) => entry.role === '用户' && entry.texts.join('').trim().length > 0);
+  const lastAnswer = [...folded].reverse().find((entry) => entry.role === '助手' && entry.texts.join('').trim().length > 0);
+  return {
+    entries: folded.length,
+    total: lines.length,
+    kept: keptLines.length,
+    truncated: lines.length > keptLines.length,
+    lines: keptLines,
+    first: firstAsk?.texts.join('\n') ?? null,
+    last: lastAnswer?.texts.join('\n') ?? null,
+  };
+}
+
 /**
  * Build the short transcript excerpt an expanded row shows.
  * @param {string[]} [lines] `用户: …` / `助手: …` lines from the reader.
@@ -117,11 +211,13 @@ export function excerptOf(lines) {
  * @param {string|null} [options.cwd]
  * @param {string} [options.untitled]
  */
-export function pickerRow({ id, title, cached, firstAsk, first, last, lines, messages = 0, bytes = 0, createdAt = null, cwd = null, untitled = '' }) {
+export function pickerRow({ id, title, cached, firstAsk, first, last, lines, messages = 0, kept = messages, truncated = false, bytes = 0, createdAt = null, cwd = null, untitled = '' }) {
   return {
     id,
     title: title ?? titleOf({ cached, firstAsk, fallback: untitled }),
     messages,
+    kept,
+    truncated,
     bytes,
     createdAt,
     cwd,

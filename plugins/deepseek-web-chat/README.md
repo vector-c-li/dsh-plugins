@@ -133,7 +133,7 @@ over from before, plus the installed bundle. Disable one of them in **Plugins**,
 - installed from git? keep the bundle and disable the `file://` row (or delete that row from
   `$DSH_HOME/profiles/desktop/cordis.patch.yml`).
 
-`v0.6.2` and later log a readable warning for this case instead of failing activation.
+`v0.6.3` and later log a readable warning for this case instead of failing activation.
 
 **`连接 GitHub 超时` / `无法访问 GitHub` while installing**
 The Host reaches GitHub through git, so a blocked direct route fails the install even when a browser
@@ -323,6 +323,30 @@ reads it, so rows are named the way you named that conversation, and each row sh
 Sessions you created by pressing *new chat* and never used are **hidden** — they used to fill the list
 with `会话 session-… 0 条消息` rows — and the footer says how many were hidden. The title chain is
 `cached title → opening question → placeholder`; a session id is never the primary label.
+
+### What exactly gets attached
+
+The row shows `40 / 97 条` when a conversation is longer than the cap: the first number is what goes into
+the prompt, the second is how many entries the conversation has. The rule, in order:
+
+1. **Read window.** The last 240 raw events first; if that folds into fewer than 48 entries, the window
+   grows to 1200, then 4000, then the whole log. This matters because one agentic turn can be hundreds
+   of events — a fixed 240-event tail once returned 3 entries for a 97-entry conversation.
+2. **Which events count.** Only `user/message` and `assistant/message`. Reasoning blocks are dropped
+   (they are the model's scratchpad), tool *results* are dropped, tool *calls* are only counted.
+3. **Folding.** Consecutive assistant events — the steps of one turn — collapse into a single
+   `助手:` entry with the prose joined by newlines and one tally line appended:
+   `（本回合使用了 3 次工具：pwsh×2, read）`.
+4. **Dropping empties.** A user message with no text, or an entry whose prose and tally are both empty,
+   contributes nothing.
+5. **Clipping.** One entry is cut at 4000 characters and marked `…（已截断）`; nothing is silently lost.
+6. **The cap.** The newest **40 entries** are kept (`MAX_TURNS`), oldest first. Entries, not raw
+   messages: one entry is one user ask or one folded turn.
+7. **Wrapping.** Lines are joined with a blank line and wrapped as
+   `<conversation title="…">…</conversation>`, then the whole context is capped by `maxContextBytes`
+   (400 000) with an explicit truncation marker.
+
+So "40 条" means at most 40 *entries* — the tail of the conversation, not necessarily all of it.
 
 ## Development
 

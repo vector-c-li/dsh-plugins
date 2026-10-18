@@ -20,13 +20,13 @@ const [{ createPowSolver }, { DeepSeekWebApi, WebApiError, CODE }, workspace, wa
   load('./dsh-sessions.js'),
 ]);
 const { readWorkspaceFile, listWorkspaceDirectory, resolveWorkspaceRoot } = workspace;
-const { readCachedTitle, pickerRow, visibleRows } = dshSessionsModule;
+const { readCachedTitle, pickerRow, visibleRows, foldTranscript, MAX_TURNS } = dshSessionsModule;
 
 /** Credential record key; the scope names this plugin, the id names the account. */
 const RECORD_KEY = 'deepseek-web-chat/account';
 
 /** Build tag shown in the panel; bump it whenever the panel document changes. */
-const PANEL_VERSION = '0.6.2';
+const PANEL_VERSION = '0.6.3';
 
 /** A DSH session id: `session-<uuid>`, tolerating a bare uuid. */
 const SESSION_ID = /^(?:session-)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
@@ -336,7 +336,9 @@ export function createService({ ctx, config, logger }) {
         // The title DSH generated is what the sidebar shows, so a dropped chip
         // reads the same as the row it came from.
         title: cached.title ?? transcript.title,
-        messages: transcript.lines.length,
+        messages: transcript.total,
+        kept: transcript.kept,
+        truncated: transcript.truncated,
         bytes: transcript.bytes,
       };
     },
@@ -387,7 +389,9 @@ export function createService({ ctx, config, logger }) {
               first: transcript.first,
               last: transcript.last,
               lines: transcript.lines,
-              messages: transcript.lines.length,
+              messages: transcript.total,
+              kept: transcript.kept,
+              truncated: transcript.truncated,
               bytes: transcript.bytes,
             }),
           );
@@ -628,16 +632,17 @@ function escapeAttribute(value) {
 /**
  * Read one DSH session's transcript through the persistence service.
  *
- * A DSH turn emits one event per assistant step, so a turn with a dozen tool
- * calls would drown its own prose if every event became a line. Consecutive
- * assistant events are therefore folded into one entry whose tool calls are
- * tallied, and only the last `MAX_TURNS` entries are kept.
+ * A DSH turn emits one assistant event per step, so a long agentic turn can be
+ * hundreds of events. Reading a fixed 240-event tail therefore returned three
+ * entries for a conversation of 59 ? the attached context depended on how much
+ * metadata the session snapshot happened to carry. The tail is now grown in
+ * steps until enough *entries* exist (or the log start is reached), and the
+ * folding itself lives in `foldTranscript` so the rule is unit-tested.
  *
  * @param {string} sessionId Stored session id.
- * @param {string} sessionId Stored session id.
  * @param {{persistence?: object, eventCount?: number}} deps Host services; a known
- *   event count lets the reader skip straight to the tail of a long log.
- * @returns {Promise<{id: string, title: string, lines: string[]}>}
+ *   event count lets the reader start from the tail instead of the whole log.
+ * @returns {Promise<{id: string, title: string, lines: string[], total: number, kept: number, truncated: boolean, first: string|null, last: string|null, bytes: number}>}
  */
 export async function readSessionTranscript(sessionId, deps = {}) {
   const persistence = deps.persistence;
@@ -646,94 +651,46 @@ export async function readSessionTranscript(sessionId, deps = {}) {
   }
   const handle = await persistence.open(sessionId, 'read');
   try {
-    // Long sessions only need their tail for context, and reading a window keeps
-    // the picker responsive when it previews a dozen conversations.
     const eventCount = Number.isInteger(deps.eventCount) ? deps.eventCount : undefined;
-    const result =
-      eventCount === undefined
-        ? await handle.read()
-        : await handle.read(Math.max(0, eventCount - 240), 240);
-    const events = Array.isArray(result?.events) ? result.events : [];
-    const entries = [];
-    for (const event of events) {
-      if (event?.type !== 'user/message' && event?.type !== 'assistant/message') continue;
-      // `user/message` carries the message itself; `assistant/message` wraps it
-      // beside the stream and usage records.
-      const content = event.data?.message?.content ?? event.data?.content;
-      const { text, tools } = blocksToContent(content);
-      if (event.type === 'user/message') {
-        if (text.length === 0) continue;
-        entries.push({ role: '用户', texts: [text], tools: [] });
-        continue;
-      }
-      const last = entries.at(-1);
-      if (last !== undefined && last.role === '助手') {
-        if (text.length > 0) last.texts.push(text);
-        last.tools.push(...tools);
-      } else {
-        entries.push({ role: '助手', texts: text.length > 0 ? [text] : [], tools: [...tools] });
-      }
+    // Small first window keeps the picker fast; grow only when the folding did not
+    // produce enough entries, and give up after the whole log has been read once.
+    const windows = eventCount === undefined ? [null] : [240, 1200, 4000, null];
+    let folded = null;
+    let eventsSeen = 0;
+    let reachedStart = eventCount === undefined;
+    for (const window of windows) {
+      const result = window === null ? await handle.read() : await handle.read(Math.max(0, eventCount - window), window);
+      const events = Array.isArray(result?.events) ? result.events : [];
+      eventsSeen = events.length;
+      folded = foldTranscript(events);
+      reachedStart = window === null || window >= eventCount || events.length < window;
+      if (reachedStart || folded.total > MAX_TURNS + 8) break;
     }
-
-    const lines = [];
-    for (const entry of entries) {
-      const prose = entry.texts.join('\n').trim();
-      const toolNote = summarizeTools(entry.tools);
-      const body = [prose, toolNote].filter((part) => part.length > 0).join('\n');
-      if (body.length === 0) continue;
-      lines.push(`${entry.role}: ${clipLine(body, 4000)}`);
-    }
-    if (lines.length === 0) throw new Error('这个会话还没有可读的对话内容');
+    if (folded === null || folded.lines.length === 0) throw new Error('这个会话还没有可读的对话内容');
 
     // Name the chip after the most recent user ask; seeded preambles and
     // runtime banners are skipped because they read as noise.
-    const asks = entries
-      .filter((entry) => entry.role === '用户')
-      .map((entry) => entry.texts.join(' ').replace(/\s+/gu, ' ').trim())
-      .filter((text) => text.length >= 8 && !/^(?:session-|<|\{|\[|#|\/)/u.test(text));
+    const asks = (folded.lines ?? [])
+      .filter((line) => line.startsWith('用户:'))
+      .map((line) => line.slice(3).replace(/\s+/gu, ' ').trim())
+      .filter((line) => line.length >= 8 && !/^(?:session-|<|\{|\[|#|\/)/u.test(line));
     const titleText = asks.at(-1) ?? asks[0] ?? '';
     const title = titleText.length > 0 ? titleText.slice(0, 32) : sessionId.slice(0, 8);
-    // The opening question identifies a conversation far better than the last
-    // follow-up, so both are returned and the picker decides.
-    const firstAsk = entries.find((entry) => entry.role === '用户' && entry.texts.join('').trim().length > 0);
-    const lastAnswer = [...entries].reverse().find((entry) => entry.role === '助手' && entry.texts.join('').trim().length > 0);
     return {
       id: sessionId,
       title: `DSH 会话 · ${title}`,
-      lines: lines.slice(-MAX_TURNS),
-      first: firstAsk?.texts.join('\n') ?? null,
-      last: lastAnswer?.texts.join('\n') ?? null,
-      bytes: lines.reduce((total, line) => total + Buffer.byteLength(line, 'utf8'), 0),
+      lines: folded.lines,
+      total: folded.total,
+      kept: folded.kept,
+      truncated: folded.truncated,
+      first: folded.first,
+      last: folded.last,
+      bytes: folded.lines.reduce((sum, line) => sum + Buffer.byteLength(line, 'utf8'), 0),
+      events: eventsSeen,
+      reachedStart,
     };
   } finally {
     await handle.close?.();
   }
 }
 
-/** How many transcript entries one dragged conversation may contribute. */
-const MAX_TURNS = 40;
-
-/** Split one message's blocks into prose and tool names. */
-function blocksToContent(content) {
-  if (!Array.isArray(content)) return { text: '', tools: [] };
-  const texts = [];
-  const tools = [];
-  for (const block of content) {
-    if (block?.type === 'text' && typeof block.text === 'string') texts.push(block.text);
-    else if (block?.type === 'tool-call' && typeof block.name === 'string') tools.push(block.name);
-  }
-  return { text: texts.join('\n'), tools };
-}
-
-/** Fold a turn's tool calls into one readable note. */
-function summarizeTools(tools) {
-  if (tools.length === 0) return '';
-  const counts = new Map();
-  for (const name of tools) counts.set(name, (counts.get(name) ?? 0) + 1);
-  const parts = [...counts].map(([name, count]) => (count > 1 ? `${name}×${count}` : name));
-  return `（本回合使用了 ${tools.length} 次工具：${parts.join(', ')}）`;
-}
-
-function clipLine(text, max) {
-  return text.length <= max ? text : `${text.slice(0, max)}…（已截断）`;
-}

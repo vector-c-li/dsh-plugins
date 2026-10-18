@@ -1168,8 +1168,12 @@ async function openSessionPicker() {
 
     const rowFor = (session) => {
       const excerpt = h('div', { class: 'session-excerpt', hidden: true });
+      // `messages` is every entry the reader found; `kept` is what the 40-entry cap
+      // leaves, so a long conversation says "40 of 59" instead of claiming 40 is it.
+      const count = session.messages ?? 0;
+      const kept = session.kept ?? count;
       const meta = [
-        ui('messagesCount', { n: session.messages ?? 0 }),
+        session.truncated === true ? ui('dshKeptOfTotal', { kept, total: count }) : ui('messagesCount', { n: count }),
         session.bytes > 0 ? ui('dshSize', { size: Math.max(1, Math.round(session.bytes / 1024)) }) : null,
         session.createdAt ? formatRelative(session.createdAt) : null,
       ]
@@ -1187,6 +1191,7 @@ async function openSessionPicker() {
         session.preview?.answer
           ? h('span', { class: 'p' }, h('em', { text: `${ui('dshAnswer')} ` }), h('span', { text: session.preview.answer }))
           : null,
+        session.truncated === true ? h('span', { class: 'cap', text: ui('dshOnlyRecent', { kept }) }) : null,
       );
       add.addEventListener('click', () => {
         addContext({
