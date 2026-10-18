@@ -46,6 +46,8 @@ const state = {
   sessionMode: 'transcript',
   /** Context summary reported by the host for the last request. */
   lastContext: null,
+  /** In-panel font multiplier (Ctrl/Cmd + / -), on top of the Host's size. */
+  fontScale: 1,
   lang: initialLang(),
   /** Multi-select mode over finished answers; `selected` holds message indexes. */
   selecting: false,
@@ -94,6 +96,7 @@ const el = {
  * composer and the context rails stay out of reach until a credential exists.
  */
 import { GATE_COPY, PANEL_COPY, UI_COPY } from './gate-copy.js';
+import { FALLBACK_PX, fontTargetOf, nextUserScale, pxOf } from './font-scale.js';
 // Aliased: this module already has a local `insertIntoComposer` that writes into
 // the panel's own textarea (the drag-and-drop fallback), which is a different
 // destination from the DSH composer.
@@ -1219,8 +1222,7 @@ async function openSessionPicker() {
   const modeBar = h('div', { class: 'mode-bar', role: 'group', 'aria-label': ui('modeLabel') });
   const modeDesc = h('div', { class: 'mode-desc' });
   const stats = h('div', { class: 'preview-stats' });
-  const sample = h('div', { class: 'preview-sample' });
-  const preview = h('div', { class: 'session-preview', hidden: true }, modeBar, modeDesc, stats, sample);
+  const preview = h('div', { class: 'session-preview', hidden: true }, modeBar, modeDesc, stats);
   const addButton = h('button', { class: 'primary', type: 'button', text: ui('dshAddContext') });
 
   const body = h('div', { class: 'session-picker' }, pickHint, search, list, hint, preview);
@@ -1268,7 +1270,6 @@ async function openSessionPicker() {
     const ticket = (picked.request += 1);
     preview.hidden = false;
     stats.textContent = ui('dshPreviewLoading');
-    sample.textContent = '';
     try {
       const query = new URLSearchParams({ id: picked.session.id, mode: state.sessionMode, headChars: '1600' });
       const result = await request(`session-context?${query.toString()}`);
@@ -1281,11 +1282,6 @@ async function openSessionPicker() {
       if (result.mode === 'file') parts.push(ui('dshFilePreviewNote', { name: result.fileName ?? '', size: kb }));
       else if (result.omitted > 0) parts.push(ui('dshOnlyRecent', { kept: result.rendered ?? 0 }));
       stats.textContent = parts.join(' · ');
-      const head = result.preview ?? '';
-      const tail = result.tail ?? '';
-      // Head plus tail: the opening shows the conversation, the tail shows what
-      // this level adds (tool calls and results only exist further down).
-      sample.textContent = tail !== '' && !head.includes(tail) ? `${head}\n\n??\n\n${tail}` : head;
     } catch (error) {
       if (ticket !== picked.request) return;
       stats.textContent = ui('readFailed', { message: String(error?.message ?? error) });
@@ -1301,46 +1297,14 @@ async function openSessionPicker() {
   };
 
   const rowFor = (session) => {
-    const excerpt = h('div', { class: 'session-excerpt', hidden: true });
-    const count = session.messages ?? 0;
-    const kept = session.kept ?? count;
-    const meta = [
-      session.truncated === true ? ui('dshKeptOfTotal', { kept, total: count }) : ui('messagesCount', { n: count }),
-      session.bytes > 0 ? ui('dshSize', { size: Math.max(1, Math.round(session.bytes / 1024)) }) : null,
-      session.createdAt ? formatRelative(session.createdAt) : null,
-    ]
-      .filter((part) => part !== null)
-      .join(' · ');
-
     const row = h('div', {
       class: 'session-row',
-      'data-search': `${session.title} ${session.preview?.ask ?? ''} ${session.preview?.answer ?? ''}`.toLowerCase(),
+      'data-search': String(session.title ?? '').toLowerCase(),
     });
     const main = h('button', { class: 'session-main', type: 'button' });
-    main.append(
-      h('span', { class: 't', text: session.title || ui('untitled') }),
-      h('span', { class: 'd', text: meta }),
-      session.preview?.ask
-        ? h('span', { class: 'p' }, h('em', { text: `${ui('dshAsk')} ` }), h('span', { text: session.preview.ask }))
-        : null,
-      session.preview?.answer
-        ? h('span', { class: 'p' }, h('em', { text: `${ui('dshAnswer')} ` }), h('span', { text: session.preview.answer }))
-        : null,
-    );
+    main.append(h('span', { class: 't', text: session.title || ui('untitled') }));
     main.addEventListener('click', () => select(session, row));
-
-    const toggle = h('button', { class: 'ghost session-toggle', type: 'button', text: ui('dshView') });
-    toggle.addEventListener('click', () => {
-      const open = excerpt.hidden;
-      if (open && excerpt.childElementCount === 0) {
-        for (const line of session.excerpt ?? []) excerpt.append(h('div', { class: 'line', text: line }));
-        if (excerpt.childElementCount === 0) excerpt.append(h('div', { class: 'line', text: ui('noContent') }));
-      }
-      excerpt.hidden = !open;
-      toggle.textContent = open ? ui('dshHide') : ui('dshView');
-    });
-
-    row.append(main, h('div', { class: 'session-side' }, toggle, excerpt));
+    row.append(main);
     return row;
   };
 
@@ -1817,6 +1781,96 @@ el.selectCopy.addEventListener('click', () => {
 });
 el.selectCancel.addEventListener('click', exitSelectMode);
 
+/* ----------------------------------------------------------------- fonts */
+
+/** The Host chat text the panel should follow, in px, and its 100% baseline. */
+function measureHostFont() {
+  const parent = window.parent;
+  if (parent === window) return { px: null, baseline: null };
+  const doc = parent.document;
+  if (doc === null) return { px: null, baseline: null };
+  const read = (node) => (node === null || node === undefined ? null : pxOf(parent.getComputedStyle(node).fontSize));
+  // A message paragraph is the closest analogue to the panel's body text; the
+  // composer is the fallback because it is always present.
+  const paragraph = [...doc.querySelectorAll('p')].find((node) => (node.textContent ?? '').trim().length > 20);
+  const px = read(paragraph) ?? read(doc.querySelector('[data-composer-input]'));
+  return { px, baseline: readBaseline(px) };
+}
+
+/**
+ * The Host's chat size at 100%, remembered across sessions.
+ *
+ * Without it there is no way to tell "the user zoomed" from "this app ships a
+ * bigger chat font": the panel would jump on first load instead of keeping its own
+ * density. Stored per origin, and re-captured by Ctrl+0 inside the panel.
+ * @param {number|null} px Current measurement.
+ */
+function readBaseline(px) {
+  if (px === null) return null;
+  try {
+    const stored = Number(window.localStorage.getItem('dsw-chat-host-baseline') ?? '');
+    if (Number.isFinite(stored) && stored > 0) return stored;
+    window.localStorage.setItem('dsw-chat-host-baseline', String(px));
+  } catch {
+    /* storage may be unavailable */
+  }
+  return px;
+}
+
+/** Apply the current measurement to the panel's root font size. */
+function applyFontScale() {
+  const { px, baseline } = measureHostFont();
+  const target = fontTargetOf({ parentPx: px, baselinePx: baseline, userScale: state.fontScale, basePx: FALLBACK_PX });
+  const next = `${target}px`;
+  if (document.documentElement.style.fontSize !== next) document.documentElement.style.fontSize = next;
+  return target;
+}
+
+let fontTimer = null;
+/**
+ * Follow the Host: a light poll catches zoom and settings changes that emit no
+ * event the iframe can observe, and the observers catch the fast paths.
+ */
+function startFontSync() {
+  applyFontScale();
+  if (fontTimer !== null) return;
+  fontTimer = window.setInterval(applyFontScale, 1000);
+  const parentDoc = window.parent === window ? null : window.parent.document;
+  if (parentDoc !== null) {
+    const observer = new window.MutationObserver(applyFontScale);
+    observer.observe(parentDoc.documentElement, { attributes: true, attributeFilter: ['style', 'class'] });
+    if (parentDoc.body !== null) observer.observe(parentDoc.body, { attributes: true, attributeFilter: ['style', 'class'] });
+  }
+  // Page zoom changes the device pixel ratio; the panel already scales with it,
+  // but re-measuring keeps the em ratios honest after a zoom step.
+  const media = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+  media.addEventListener?.('change', () => applyFontScale());
+}
+
+window.addEventListener('keydown', (event) => {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+  const key = event.key;
+  const action = key === '=' || key === '+' ? 'in' : key === '-' || key === '_' ? 'out' : key === '0' ? 'reset' : null;
+  if (action === null) return;
+  event.preventDefault();
+  if (action === 'reset') {
+    // Re-capture the Host size so "reset" means "match the Host as it is now",
+    // even if the baseline was captured before the user changed their zoom.
+    try {
+      window.localStorage.removeItem('dsw-chat-host-baseline');
+    } catch {
+      /* storage may be unavailable */
+    }
+  }
+  state.fontScale = nextUserScale(action, state.fontScale);
+  try {
+    window.localStorage.setItem('dsw-chat-font-scale', String(state.fontScale));
+  } catch {
+    /* storage may be unavailable */
+  }
+  applyFontScale();
+});
+
 /* ------------------------------------------------------------------- boot */
 
 (function applyThemeFromQuery() {
@@ -1826,6 +1880,13 @@ el.selectCancel.addEventListener('click', exitSelectMode);
 
 (async function boot() {
   document.body.dataset.boot = 'started';
+  try {
+    const stored = Number(window.localStorage.getItem('dsw-chat-font-scale') ?? '');
+    if (Number.isFinite(stored) && stored > 0) state.fontScale = stored;
+  } catch {
+    /* storage may be unavailable */
+  }
+  startFontSync();
   document.documentElement.lang = state.lang === 'en' ? 'en' : 'zh-CN';
   renderChrome();
   renderAccount();

@@ -28,7 +28,7 @@ const { renderSession, SESSION_MODES } = renderModule;
 const RECORD_KEY = 'deepseek-web-chat/account';
 
 /** Build tag shown in the panel; bump it whenever the panel document changes. */
-const PANEL_VERSION = '0.7.1';
+const PANEL_VERSION = '0.7.2';
 
 /** A DSH session id: `session-<uuid>`, tolerating a bare uuid. */
 const SESSION_ID = /^(?:session-)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;

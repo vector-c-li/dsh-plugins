@@ -17,6 +17,7 @@ const ASSETS = {
   '/app.css': { file: 'app.css', type: 'text/css; charset=utf-8' },
   '/gate-copy.js': { file: 'gate-copy.js', type: 'text/javascript; charset=utf-8' },
   '/composer-bridge.js': { file: 'composer-bridge.js', type: 'text/javascript; charset=utf-8' },
+  '/font-scale.js': { file: 'font-scale.js', type: 'text/javascript; charset=utf-8' },
   // Illustrations for the sign-in guide; a fixed whitelist, not a directory walk.
   '/guide/step1.svg': { file: 'guide/step1.svg', type: 'image/svg+xml; charset=utf-8' },
   '/guide/step2.svg': { file: 'guide/step2.svg', type: 'image/svg+xml; charset=utf-8' },

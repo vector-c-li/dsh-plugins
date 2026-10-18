@@ -8,6 +8,7 @@
  *
  * Run: node scripts/panel-refs-check.mjs
  */
+import { readdirSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,6 +51,33 @@ for (const name of ['gate', 'el']) {
     console.log(`FAIL ${name}: references undeclared field(s): ${missing.join(', ')}`);
   }
   if (unused.length > 0) console.log(`     note: ${name}.${unused.join(`, ${name}.`)} declared but never read`);
+}
+
+// A panel module that is imported but not whitelisted in ASSETS 404s, and the
+// panel silently stops running (the document's static markup still shows). Assert
+// every relative import and every <script src> has a served path.
+{
+  const routesSource = readFileSync('lib/host/routes.js', 'utf8');
+  const served = new Set([...routesSource.matchAll(/'(\/[^']+\.js)'/gu)].map((match) => match[1]));
+  const missing = [];
+  for (const name of readdirSync('lib/web')) {
+    if (!name.endsWith('.js')) continue;
+    const source = readFileSync(`lib/web/${name}`, 'utf8');
+    for (const match of source.matchAll(/from '(\.[^']+)'/gu)) {
+      const path = match[1].replace(/^\.\//u, '/');
+      if (!served.has(path)) missing.push(`${name} imports ${path}`);
+    }
+  }
+  const html = readFileSync('lib/web/index.html', 'utf8');
+  for (const match of html.matchAll(/src="(\/[^"]+\.js)"/gu)) {
+    if (!served.has(match[1])) missing.push(`index.html loads ${match[1]}`);
+  }
+  if (missing.length > 0) {
+    failures += 1;
+    console.log('FAIL every panel module is served: ' + missing.join(' | '));
+  } else {
+    console.log('ok   every panel module is served (ASSETS whitelist)');
+  }
 }
 
 console.log(failures === 0 ? '\npanel reference checks passed' : `\n${failures} check(s) failed`);

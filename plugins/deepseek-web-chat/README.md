@@ -133,7 +133,7 @@ over from before, plus the installed bundle. Disable one of them in **Plugins**,
 - installed from git? keep the bundle and disable the `file://` row (or delete that row from
   `$DSH_HOME/profiles/desktop/cordis.patch.yml`).
 
-`v0.7.1` and later log a readable warning for this case instead of failing activation.
+`v0.7.2` and later log a readable warning for this case instead of failing activation.
 
 **`连接 GitHub 超时` / `无法访问 GitHub` while installing**
 The Host reaches GitHub through git, so a blocked direct route fails the install even when a browser
@@ -317,23 +317,36 @@ A DSH session log carries no title of its own — the title the sidebar shows li
 projection cache (`storages/session_projcache/sessions/<id>.json` → `record.rows.title.val`). The picker
 reads it, so rows are named the way you named that conversation.
 
-Loading is **two steps**, and the second one shows what it will do before it does it:
+Loading is **two steps**:
 
-1. **Pick the conversation.** Click a row and it highlights. Each row shows the title, message count, size
-   and age, plus a two-line preview (`问` the opening question, `答` the last answer); **查看** expands a
-   four-line excerpt, and the search box filters on title and preview text. Sessions created by pressing
-   *new chat* and never used are hidden, and the footer says how many were hidden.
-2. **Pick how to load it** — `正文 / 含工具 / 文件附件`. Changing the level re-renders the pane below: a
-   one-line description of the level, the numbers (`98 / 107 条 · 181 KB`), and a **head + tail sample** of
-   the exact text that would be sent. The tail matters — tool calls and results only appear further down,
-   which is exactly where the rich levels differ from prose.
+1. **Pick the conversation.** Rows show the title only — it is unique, and it is all the choice needs;
+   the search box filters on it. Sessions created by pressing *new chat* and never used are hidden, and
+   the footer says how many were hidden.
+2. **Pick how to load it** — `正文 / 含工具 / 文件附件`. The pane below states what that level does and its
+   numbers (`105 / 114 条 · 186 KB`): entries rendered of the total, and the bytes that will be sent.
 
 **加入上下文** then attaches it. The title chain is `cached title → opening question → placeholder`; a
 session id is never the primary label.
 
-The preview is a **host rendering, not a guess**: the panel calls `GET api/session-context?id=…&mode=…`,
-which runs the same renderer the send path uses (no upload, no completion), so the numbers and the sample
-are what the next request will contain.
+The numbers are a **host rendering, not a guess**: the panel calls
+`GET api/session-context?id=…&mode=…`, which runs the same renderer the send path uses (no upload, no
+completion), so what the pane reports is what the next request will contain.
+
+### Text size follows the Host
+
+The panel's interface keeps pace with DSH's chat text instead of sitting at a fixed 13 px:
+
+- the Host's chat font size is measured through `window.parent` and compared against a **baseline captured
+  at 100%**, so a zoom step or a bigger chat font moves the panel by the same factor while it keeps its
+  own density;
+- every panel size is expressed in `em`, so one root font size scales the whole interface;
+- **Ctrl/Cmd `+` / `-`** inside the panel nudges the panel on its own (a multiplier stored in
+  `localStorage`), and **Ctrl/Cmd `0`** resets it and re-captures the Host baseline;
+- a 1 s poll plus observers on the Host's `<html>`/`<body>` attributes pick up changes that emit no event
+  the iframe can observe. The panel stays inside 10–22 px so a far-zoomed Host cannot make it unusable.
+
+`lib/web/font-scale.js` holds the arithmetic (`fontTargetOf`, `nextUserScale`, `pxOf`) and
+`scripts/font-scale-check.mjs` pins it.
 
 ### What exactly gets attached
 
