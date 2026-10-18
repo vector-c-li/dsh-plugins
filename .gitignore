@@ -1,0 +1,23 @@
+# Ignore everywhere
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+
+# DSH runtime bits that must never be committed
+.credentials.yaml
+*.credentials.yaml
+.dsh/
+cache/
+data/
+
+# Local dev leftovers
+.tmp-*/
+tmp/
+*.local.*
+preview.log
+preview.err
+
+# The vendor proof-of-work module is downloaded, not distributed.
+# Get it with: node plugins/deepseek-web-chat/scripts/fetch-wasm.mjs
+*.wasm
