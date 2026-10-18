@@ -19,6 +19,7 @@
 | **工作区上下文** | 从工作区挑文件（或拖进来）作为提示词的一部分。 |
 | **DSH 会话上下文** | 拖一条侧边栏会话进来（或用 `会话` 按钮）；Host 读转录并折进提示词。 |
 | **历史会话** | 浏览并继续网页版已有的对话。 |
+| **插入 DSH** | 每条完成的回答下有 **复制** 与 **插入 DSH**：纯文本 markdown 写进 DSH 输入框的光标处，由你自己编辑发送。**绝不自动发送**。 |
 | **中英双语登录页** | 登录前整屏只有登录页，带四步图文指引，可切换中/英。 |
 
 ## 环境要求
@@ -129,7 +130,7 @@ ln -s ~/dsh-plugins/plugins/deepseek-web-chat ~/.dsh/profiles/desktop/node_modul
 - 从检出目录开发：保留 `file://` 那行，把组合包卸掉；
 - 从 git 安装：保留组合包，停用（或从 `$DSH_HOME/profiles/desktop/cordis.patch.yml` 删掉）`file://` 那行。
 
-`v0.5.4` 起，这种情况会打印一条可读的警告，而不是让整行启用失败。
+`v0.5.5` 起，这种情况会打印一条可读的警告，而不是让整行启用失败。
 
 **安装时报 `连接 GitHub 超时` / `无法访问 GitHub`**
 Host 是通过 **git** 去取 GitHub 的，所以浏览器能开、直连被墙时安装仍会超时。两条出路：
@@ -188,6 +189,32 @@ git 安装是快照：再粘一次 spec（或 `dsh plugin --profile desktop add 
 上下文是**提示词里的文本**，不是上传附件。DSH 会话里的工具调用会被折叠成一行统计，
 让长对话仍然可读。
 
+## 插入 DSH
+
+每条完成的回答底部有两个动作：**复制** 和 **插入 DSH**。
+
+「插入 DSH」把回答（纯文本 markdown，代码围栏原样保留）写进 DSH 输入框的**光标处**，
+写完把光标留在末尾；如果输入框已有内容，会先补一个空行，避免和草稿粘在一起。
+**不会自动发送** —— 由你自己过目、编辑、发送，所以回答里即使混进注入指令也无法自行触发工具。
+
+面板与主界面同源，`lib/web/composer-bridge.js` 通过 `window.parent` 直接触达主输入框，
+按下列顺序降级，每一级失败都会打印 `composer bridge: …` 说明原因：
+
+| 层级 | 手法 | 何时使用 |
+|---|---|---|
+| 1 | `element.insertText` | 只有当未来 DSH 在输入元素上暴露该方法时 |
+| 2 | 合成 `paste` 事件 | **常规路径**：输入框是 Lexical，这等价于 Ctrl+V，官方粘贴链路 |
+| 3 | `execCommand('insertText')` / textarea setter | paste 被忽略时；或输入框是普通 `<textarea>` 时 |
+| 4 | 剪贴板 | 找不到输入框、或所有 DOM 层都失败时：复制并弹提示让用户手动粘贴 |
+
+**没有服务/store 层**，这是刻意的：DSH 没有对插件开放草稿写入接口，草稿 store 是按会话
+scope 的工厂（`slots.register({ name: 'conversation.session', store })`），`create(scope)`
+返回的是另一个实例，写它不会让输入框重渲染。
+
+选择器集中在 `composer-bridge.js` 的 `COMPOSER_SELECTORS` 一个常量里：
+`[data-composer-input]` → `[role="textbox"][contenteditable="true"]` → 任意可见可编辑元素。
+DSH 自己的类名是 CSS-module 哈希，不作依赖。
+
 ## 开发
 
 ```powershell
@@ -195,6 +222,8 @@ node scripts/selftest.mjs              # 接口解析、PoW 求解、上下文�
 node scripts/client-smoke.mjs          # 客户端 bundle 注册 + 插槽注入（假 loader）
 node scripts/route-smoke.mjs           # 用假 ctx 跑 HTTP 面
 node scripts/wasm-fallback-check.mjs   # 没有 assets 的安装：下载一次、之后复用
+node scripts/panel-refs-check.mjs      # panel script reads only declared fields
+node scripts/composer-bridge-check.mjs # composer insertion tiers (fake DOM)
 node scripts/live-check.mjs            # 对着运行中的 DSH（自签浏览器 cookie）
 node scripts/live-chat.mjs --dsh-session <id>   # 真实提问，打印答案与引用
 node scripts/preview.mjs               # 面板 UI 的静态预览服务

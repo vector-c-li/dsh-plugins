@@ -72,12 +72,16 @@ const el = {
 };
 
 /**
- * The pre-login gate and its bilingual copy.
+ * The pre-login gate and the message actions share one bilingual copy module.
  *
  * Before sign-in the panel shows nothing but this screen: the transcript, the
  * composer and the context rails stay out of reach until a credential exists.
  */
-import { GATE_COPY } from './gate-copy.js';
+import { GATE_COPY, PANEL_COPY } from './gate-copy.js';
+// Aliased: this module already has a local `insertIntoComposer` that writes into
+// the panel's own textarea (the drag-and-drop fallback), which is a different
+// destination from the DSH composer.
+import { insertIntoComposer as insertIntoHostComposer } from './composer-bridge.js';
 
 /** Current gate language; persisted so it survives a reload. */
 function initialLang() {
@@ -108,6 +112,11 @@ const gate = {
 /** Copy for the active language. */
 function t(key) {
   return (GATE_COPY[state.lang] ?? GATE_COPY.zh)[key] ?? key;
+}
+
+/** Copy for the message action row, in the active language. */
+function p(key) {
+  return (PANEL_COPY[state.lang] ?? PANEL_COPY.zh)[key] ?? key;
 }
 
 /** Build the illustrated four-step guide (thumbnails zoom into a modal). */
@@ -462,6 +471,32 @@ function renderMessage(message) {
   if (message.role === 'assistant' && message.tokens) {
     parts.push(h('div', { class: 'meta' }, h('span', { text: `${message.tokens} tokens` })));
   }
+  // Copy / insert belong to finished answers only: streaming text would land in
+  // the composer half-written.
+  if (message.role === 'assistant' && !message.pending && String(message.text ?? '').trim().length > 0) {
+    parts.push(
+      h(
+        'div',
+        { class: 'msg-actions' },
+        h('button', {
+          class: 'ghost',
+          type: 'button',
+          text: p('copy'),
+          onclick: () => {
+            copyAnswer(message);
+          },
+        }),
+        h('button', {
+          class: 'ghost',
+          type: 'button',
+          text: p('insert'),
+          onclick: (event) => {
+            insertAnswer(message, event.currentTarget);
+          },
+        }),
+      ),
+    );
+  }
   return h(
     'div',
     { class: `msg ${message.role}${message.error ? ' error' : ''}` },
@@ -472,6 +507,62 @@ function renderMessage(message) {
 
 function scrollToBottom() {
   el.transcript.scrollTop = el.transcript.scrollHeight;
+}
+
+/* ------------------------------------------------------- message actions */
+
+/**
+ * Copy one finished answer.
+ * @param {{text?: string}} message
+ */
+async function copyAnswer(message) {
+  const text = String(message.text ?? '');
+  if (text.trim().length === 0) {
+    toast(p('insertEmpty'));
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(p('copied'));
+  } catch (error) {
+    toast(String(error?.message ?? error));
+  }
+}
+
+/** One insertion at a time: a second click must not interleave with the first. */
+let inserting = false;
+
+/**
+ * Put one finished answer into the DSH composer.
+ *
+ * The bridge focuses the composer itself; nothing here sends the message, and
+ * focus is never pulled back to the panel afterwards.
+ * @param {{text?: string}} message
+ * @param {HTMLButtonElement} [button]
+ */
+async function insertAnswer(message, button) {
+  const text = String(message.text ?? '');
+  if (text.trim().length === 0) {
+    toast(p('insertEmpty'));
+    return;
+  }
+  if (inserting) return;
+  inserting = true;
+  if (button !== undefined) button.disabled = true;
+  try {
+    const result = await insertIntoHostComposer(text, { lang: state.lang });
+    if (result.ok) toast(p('inserted'));
+    else if (result.via === 'clipboard' && !String(result.reason ?? '').includes('no-clipboard')) {
+      toast(p('insertedClipboard'));
+    } else {
+      toast(p('insertFailed'));
+    }
+  } catch (error) {
+    toast(String(error?.message ?? error));
+  } finally {
+    inserting = false;
+    if (button !== undefined) button.disabled = false;
+  }
 }
 
 /* ------------------------------------------------------------------- data */

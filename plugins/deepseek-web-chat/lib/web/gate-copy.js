@@ -45,3 +45,29 @@ export const GATE_COPY = {
     opened: 'Opened in your browser — come back and paste the userToken',
   },
 };
+
+/**
+ * Copy for the message action row and the composer hand-off.
+ *
+ * Same shape as GATE_COPY: one language map, looked up with the panel language.
+ */
+export const PANEL_COPY = {
+  zh: {
+    copy: '复制',
+    insert: '插入 DSH',
+    copied: '已复制',
+    inserted: '已插入到 DSH 输入框，可继续编辑',
+    insertedClipboard: '当前 DSH 版本不支持自动插入，已复制到剪贴板，请手动粘贴',
+    insertFailed: '插入失败，也没有复制成功；请用「复制」按钮手动粘贴',
+    insertEmpty: '这条回答还没有内容',
+  },
+  en: {
+    copy: 'Copy',
+    insert: 'Insert into DSH',
+    copied: 'Copied',
+    inserted: 'Inserted into the DSH composer — edit and send when ready',
+    insertedClipboard: 'This DSH build cannot insert automatically; the text is on your clipboard',
+    insertFailed: 'Insert failed and the clipboard write failed too; use Copy and paste manually',
+    insertEmpty: 'This answer has no text yet',
+  },
+};

@@ -42,6 +42,7 @@ const STATIC = {
   '/deepseek-web/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/deepseek-web/app.css': ['app.css', 'text/css; charset=utf-8'],
   '/deepseek-web/gate-copy.js': ['gate-copy.js', 'text/javascript; charset=utf-8'],
+  '/deepseek-web/composer-bridge.js': ['composer-bridge.js', 'text/javascript; charset=utf-8'],
   '/deepseek-web/guide/step1.svg': ['guide/step1.svg', 'image/svg+xml; charset=utf-8'],
   '/deepseek-web/guide/step2.svg': ['guide/step2.svg', 'image/svg+xml; charset=utf-8'],
   '/deepseek-web/guide/step3.svg': ['guide/step3.svg', 'image/svg+xml; charset=utf-8'],

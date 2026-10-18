@@ -20,6 +20,7 @@ Part of the [`dsh-plugins`](https://github.com/vector-c-li/dsh-plugins) collecti
 | **Workspace context** | Attach files from the current workspace (picker or drag-and-drop); they are inlined into the prompt. |
 | **DSH conversation context** | Drag a sidebar conversation in (or use the `会话` button); the Host reads the transcript and folds it into the prompt. |
 | **History** | Browse and continue existing web conversations. |
+| **Insert into DSH** | Every finished answer has **Copy** and **Insert into DSH**: the text goes into the DSH composer at the caret, for you to edit. It is never sent automatically. |
 | **Bilingual sign-in** | The pre-login page is Chinese/English with a four-step illustrated guide. |
 
 ## Requirements
@@ -132,7 +133,7 @@ over from before, plus the installed bundle. Disable one of them in **Plugins**,
 - installed from git? keep the bundle and disable the `file://` row (or delete that row from
   `$DSH_HOME/profiles/desktop/cordis.patch.yml`).
 
-`v0.5.4` and later log a readable warning for this case instead of failing activation.
+`v0.5.5` and later log a readable warning for this case instead of failing activation.
 
 **`连接 GitHub 超时` / `无法访问 GitHub` while installing**
 The Host reaches GitHub through git, so a blocked direct route fails the install even when a browser
@@ -163,6 +164,33 @@ local copy) and reload.
 **Upgrading**
 A git install is a snapshot: paste the spec again (or `dsh plugin --profile desktop add …`) and
 enable the plugin, then refresh.
+
+## Insert into DSH
+
+Each finished answer carries two actions: **Copy** and **Insert into DSH**.
+
+**Insert into DSH** writes the answer — plain-text Markdown, code fences intact — into the DSH
+composer at the caret, then puts the caret after it. If the composer already holds text, a blank line
+is inserted first so the two never glue together. The message is **not** sent: review and edit it
+yourself. A prompt-injected answer therefore cannot trigger a tool call on its own.
+
+The panel is a same-origin iframe, so `lib/web/composer-bridge.js` reaches the Host composer through
+`window.parent` and degrades in this order, logging `composer bridge: …` at every miss:
+
+| Tier | Mechanism | When it is used |
+|---|---|---|
+| 1 | `element.insertText` | Only if a future DSH exposes such a method on the composer |
+| 2 | synthetic `paste` | Normal path: the composer is a Lexical editor and this is its clipboard route |
+| 3 | `execCommand('insertText')` / textarea setter | If the paste event is ignored, or the composer is a plain `<textarea>` |
+| 4 | clipboard | If no composer is found or every DOM layer fails: the text is copied and a toast says so |
+
+There is deliberately no service/store layer: DSH exposes no draft-insertion API to plugins, and the
+draft store is a per-session factory (`slots.register({ name: 'conversation.session', store })`) whose
+`create(scope)` returns a fresh instance, so writing through it would not re-render the composer.
+
+The composer selector lives in one constant (`COMPOSER_SELECTORS` in `composer-bridge.js`):
+`[data-composer-input]` first, then `[role="textbox"][contenteditable="true"]`, then any visible
+editable. DSH's own class names are CSS-module hashes and are never used.
 
 ## Configuration
 
@@ -202,6 +230,8 @@ node scripts/selftest.mjs              # API parsing, PoW solver, context builde
 node scripts/client-smoke.mjs          # bundle registration + slot injection (fake loader)
 node scripts/route-smoke.mjs           # HTTP surface on a fake ctx
 node scripts/wasm-fallback-check.mjs   # install without assets: download + reuse the module
+node scripts/panel-refs-check.mjs      # panel script reads only declared fields
+node scripts/composer-bridge-check.mjs # composer insertion tiers (fake DOM)
 node scripts/live-check.mjs            # against a running DSH (mints a browser cookie)
 node scripts/live-chat.mjs --dsh-session <id>   # real answer, prints text + citations
 node scripts/preview.mjs               # static preview server for the panel UI
