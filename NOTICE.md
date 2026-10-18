@@ -1,5 +1,7 @@
 # Third-party notices
 
+English · [中文](NOTICE.zh-CN.md)
+
 The MIT licence in [`LICENSE`](LICENSE) covers the code in this repository.
 
 ## DeepSeek front-end asset (not distributed here)
