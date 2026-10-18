@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 220" role="img" aria-label="Step 2: open DevTools with F12 and pick the Application tab">
+  <rect width="400" height="220" rx="12" fill="#f7f8fa"/>
+  <rect x="18" y="14" width="364" height="120" rx="10" fill="#ffffff" stroke="#d9dce3"/>
+  <rect x="18" y="14" width="364" height="26" rx="10" fill="#eef0f5"/>
+  <rect x="18" y="30" width="364" height="10" fill="#eef0f5"/>
+  <circle cx="34" cy="27" r="3" fill="#ff5f57"/>
+  <circle cx="45" cy="27" r="3" fill="#febc2e"/>
+  <circle cx="56" cy="27" r="3" fill="#28c840"/>
+  <rect x="72" y="21" width="240" height="12" rx="6" fill="#ffffff" stroke="#d9dce3"/>
+  <text x="82" y="30" font-family="Segoe UI, Arial, sans-serif" font-size="8" fill="#4d6bfe">chat.deepseek.com</text>
+  <rect x="24" y="52" width="352" height="76" rx="6" fill="#fbfcfe" stroke="#e5e8ef"/>
+  <rect x="40" y="70" width="150" height="8" rx="4" fill="#e3e7f0"/>
+  <rect x="40" y="86" width="230" height="8" rx="4" fill="#e3e7f0"/>
+  <rect x="40" y="102" width="110" height="8" rx="4" fill="#e3e7f0"/>
+
+  <rect x="18" y="142" width="364" height="64" rx="10" fill="#20242c"/>
+  <rect x="18" y="142" width="364" height="20" rx="10" fill="#2b303a"/>
+  <text x="30" y="156" font-family="Segoe UI, Arial, sans-serif" font-size="8" fill="#8b93a3">Elements</text>
+  <text x="76" y="156" font-family="Segoe UI, Arial, sans-serif" font-size="8" fill="#8b93a3">Console</text>
+  <text x="120" y="156" font-family="Segoe UI, Arial, sans-serif" font-size="8" fill="#8b93a3">Sources</text>
+  <text x="164" y="156" font-family="Segoe UI, Arial, sans-serif" font-size="8" fill="#8b93a3">Network</text>
+  <rect x="204" y="144" width="62" height="16" rx="4" fill="#4d6bfe"/>
+  <text x="211" y="156" font-family="Segoe UI, Arial, sans-serif" font-size="8" fill="#ffffff">Application</text>
+  <text x="276" y="156" font-family="Segoe UI, Arial, sans-serif" font-size="8" fill="#8b93a3">Security</text>
+  <rect x="30" y="170" width="90" height="8" rx="4" fill="#39404d"/>
+  <rect x="30" y="186" width="130" height="8" rx="4" fill="#39404d"/>
+  <rect x="170" y="170" width="196" height="24" rx="5" fill="#2b303a"/>
+
+  <rect x="262" y="58" width="96" height="30" rx="8" fill="#ffffff" stroke="#4d6bfe" stroke-dasharray="4 3"/>
+  <text x="310" y="70" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="10" fill="#4d6bfe" font-weight="600">F12</text>
+  <text x="310" y="82" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="7.5" fill="#6b7280">或右键 → 检查</text>
+</svg>

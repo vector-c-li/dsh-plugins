@@ -1,0 +1,54 @@
+{
+  "name": "dsh-deepseek-web-chat",
+  "version": "0.5.2",
+  "private": true,
+  "description": "A chat.deepseek.com panel in DSH's right sidebar: use your own account, attach workspace files or DSH conversations as context.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/**/*.js",
+    "lib/web/*",
+    "lib/web/guide/*",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh-CN.md",
+    "docs/*.md",
+    "docs/*.png",
+    "scripts/fetch-wasm.mjs"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vector-c-li/dsh-plugins.git",
+    "directory": "plugins/deepseek-web-chat"
+  },
+  "homepage": "https://github.com/vector-c-li/dsh-plugins/tree/main/plugins/deepseek-web-chat",
+  "bugs": {
+    "url": "https://github.com/vector-c-li/dsh-plugins/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "chat",
+    "sidebar"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  }
+}
