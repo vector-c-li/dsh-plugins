@@ -133,7 +133,7 @@ over from before, plus the installed bundle. Disable one of them in **Plugins**,
 - installed from git? keep the bundle and disable the `file://` row (or delete that row from
   `$DSH_HOME/profiles/desktop/cordis.patch.yml`).
 
-`v0.7.2` and later log a readable warning for this case instead of failing activation.
+`v0.7.3` and later log a readable warning for this case instead of failing activation.
 
 **`连接 GitHub 超时` / `无法访问 GitHub` while installing**
 The Host reaches GitHub through git, so a blocked direct route fails the install even when a browser
@@ -340,8 +340,10 @@ The panel's interface keeps pace with DSH's chat text instead of sitting at a fi
   at 100%**, so a zoom step or a bigger chat font moves the panel by the same factor while it keeps its
   own density;
 - every panel size is expressed in `em`, so one root font size scales the whole interface;
-- **Ctrl/Cmd `+` / `-`** inside the panel nudges the panel on its own (a multiplier stored in
-  `localStorage`), and **Ctrl/Cmd `0`** resets it and re-captures the Host baseline;
+- three tiny top-bar buttons **`A-` / `A` / `A+`** step that multiplier by 0.1 (their tooltips report the
+  current percentage), so no shortcut is needed;
+- **Ctrl/Cmd `+` / `-`** do the same from the keyboard (the multiplier is stored in `localStorage`), and
+  **Ctrl/Cmd `0`** resets it and re-captures the Host baseline;
 - a 1 s poll plus observers on the Host's `<html>`/`<body>` attributes pick up changes that emit no event
   the iframe can observe. The panel stays inside 10–22 px so a far-zoomed Host cannot make it unusable.
 

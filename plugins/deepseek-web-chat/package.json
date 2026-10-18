@@ -1,6 +1,6 @@
 {
   "name": "dsh-deepseek-web-chat",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "private": true,
   "description": "A chat.deepseek.com panel in DSH's right sidebar: use your own account, attach workspace files or DSH conversations as context.",
   "type": "module",

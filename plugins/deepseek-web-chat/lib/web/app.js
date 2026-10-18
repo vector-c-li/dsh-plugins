@@ -85,6 +85,9 @@ const el = {
   selectCancel: document.getElementById('select-cancel'),
   selectAttach: document.getElementById('select-attach'),
   langToggle: document.getElementById('lang-toggle'),
+  fontOut: document.getElementById('font-out'),
+  fontReset: document.getElementById('font-reset'),
+  fontIn: document.getElementById('font-in'),
   emptyTitle: document.getElementById('empty-title'),
   emptyTagline: document.getElementById('empty-tagline'),
 };
@@ -432,6 +435,10 @@ function renderToggles() {
  */
 function renderChrome() {
   const version = state.settings?.version ? `v${state.settings.version}` : '';
+  const scalePercent = Math.round((Number.isFinite(state.fontScale) ? state.fontScale : 1) * 100);
+  el.fontOut.title = ui('fontSmaller', { scale: scalePercent });
+  el.fontReset.title = ui('fontReset', { scale: scalePercent });
+  el.fontIn.title = ui('fontLarger', { scale: scalePercent });
   el.langToggle.textContent = ui('language');
   // The toggle advertises the language it switches *to*, so each label comes from
   // the other table rather than from a literal here.
@@ -1847,15 +1854,13 @@ function startFontSync() {
   media.addEventListener?.('change', () => applyFontScale());
 }
 
-window.addEventListener('keydown', (event) => {
-  if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
-  const key = event.key;
-  const action = key === '=' || key === '+' ? 'in' : key === '-' || key === '_' ? 'out' : key === '0' ? 'reset' : null;
-  if (action === null) return;
-  event.preventDefault();
+/**
+ * Apply one font-size action, from a top-bar button or a shortcut.
+ * @param {'in'|'out'|'reset'} action
+ */
+function changeFontScale(action) {
   if (action === 'reset') {
-    // Re-capture the Host size so "reset" means "match the Host as it is now",
-    // even if the baseline was captured before the user changed their zoom.
+    // Reset means "match the Host as it is now", so the old baseline goes too.
     try {
       window.localStorage.removeItem('dsw-chat-host-baseline');
     } catch {
@@ -1869,6 +1874,24 @@ window.addEventListener('keydown', (event) => {
     /* storage may be unavailable */
   }
   applyFontScale();
+  renderChrome();
+}
+
+for (const [element, action] of [
+  [el.fontOut, 'out'],
+  [el.fontReset, 'reset'],
+  [el.fontIn, 'in'],
+]) {
+  element?.addEventListener('click', () => changeFontScale(action));
+}
+
+window.addEventListener('keydown', (event) => {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+  const key = event.key;
+  const action = key === '=' || key === '+' ? 'in' : key === '-' || key === '_' ? 'out' : key === '0' ? 'reset' : null;
+  if (action === null) return;
+  event.preventDefault();
+  changeFontScale(action);
 });
 
 /* ------------------------------------------------------------------- boot */

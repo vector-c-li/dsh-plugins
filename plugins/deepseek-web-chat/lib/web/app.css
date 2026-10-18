@@ -237,6 +237,16 @@ body[data-gate="on"] #composer { display: none; }
   background: var(--dsw-bg);
 }
 #topbar .spacer { flex: 1; min-width: 4px; }
+/* Three tiny controls; the group must never wrap the top bar. */
+.font-ctl { display: inline-flex; align-items: center; gap: 0; flex: none; }
+.font-ctl .font-btn {
+  padding: 2px 4px;
+  min-width: 20px;
+  font-size: 0.77em;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  border-radius: 4px;
+}
 #topbar button {
   flex: none;
   padding: 3px 6px;
