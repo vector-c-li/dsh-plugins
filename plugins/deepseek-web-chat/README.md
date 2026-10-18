@@ -134,6 +134,23 @@ over from before, plus the installed bundle. Disable one of them in **Plugins**,
 
 `v0.5.3` and later log a readable warning for this case instead of failing activation.
 
+**`连接 GitHub 超时` / `无法访问 GitHub` while installing**
+The Host reaches GitHub through git, so a blocked direct route fails the install even when a browser
+works. Two ways out:
+
+- **Proxy**: point git at the proxy that already works for your browser, then retry the same spec —
+  `git config --global http.proxy http://127.0.0.1:7897` (adjust the port; undo with
+  `git config --global --unset http.proxy`). `~/.npmrc` with `proxy=` / `https-proxy=` covers pnpm's
+  own registry calls.
+- **Tarball**: build one locally and install from the file, no network needed —
+
+  ```powershell
+  pnpm pack --pack-destination dist        # in plugins/deepseek-web-chat
+  ```
+
+  then paste `<abs path>/dist/dsh-deepseek-web-chat-<version>.tgz` into **Add plugin**. A tarball
+  installs as a copy, so uninstalling never touches your source folder.
+
 **The panel is served but the sidebar tab is missing**
 The Host half and the browser half load separately: toggle the plugin off/on, then refresh the DSH
 page (restart once if it still does not appear).

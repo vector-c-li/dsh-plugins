@@ -131,6 +131,22 @@ ln -s ~/dsh-plugins/plugins/deepseek-web-chat ~/.dsh/profiles/desktop/node_modul
 
 `v0.5.3` 起，这种情况会打印一条可读的警告，而不是让整行启用失败。
 
+**安装时报 `连接 GitHub 超时` / `无法访问 GitHub`**
+Host 是通过 **git** 去取 GitHub 的，所以浏览器能开、直连被墙时安装仍会超时。两条出路：
+
+- **配代理**：把 git 指到浏览器在用的那个代理，再用同一段 spec 重试 ——
+  `git config --global http.proxy http://127.0.0.1:7897`（端口按你的客户端改；撤销用
+  `git config --global --unset http.proxy`）。`~/.npmrc` 里写 `proxy=` / `https-proxy=` 可覆盖
+  pnpm 自己的 registry 请求。
+- **用压缩包**：本地打一个包，从文件安装，完全不走网络 ——
+
+  ```powershell
+  pnpm pack --pack-destination dist        # 在 plugins/deepseek-web-chat 里执行
+  ```
+
+  然后把 `<绝对路径>/dist/dsh-deepseek-web-chat-<版本>.tgz` 粘进**添加插件**。压缩包是以副本方式安装的，
+  卸载不会动你的源码目录。
+
 **面板能打开，但侧栏没有标签页**
 Host 半和浏览器半是分开加载的：把插件关掉再打开，然后刷新 DSH 页面（还不出现就重启一次）。
 
