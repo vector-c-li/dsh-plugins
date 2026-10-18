@@ -24,7 +24,7 @@ const { readWorkspaceFile, listWorkspaceDirectory, resolveWorkspaceRoot } = work
 const RECORD_KEY = 'deepseek-web-chat/account';
 
 /** Build tag shown in the panel; bump it whenever the panel document changes. */
-const PANEL_VERSION = '0.6.0';
+const PANEL_VERSION = '0.6.1';
 
 /** A DSH session id: `session-<uuid>`, tolerating a bare uuid. */
 const SESSION_ID = /^(?:session-)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
@@ -141,6 +141,8 @@ export function createService({ ctx, config, logger }) {
    * it (verified: `/users/current` answers 40003 INVALID_TOKEN).
    */
   let dshAccountCache;
+  /** Newest retention sweep result, published through `status`. */
+  let attachmentGcSummary = null;
   /** Last failure while reading the DSH profile, surfaced in `status` for support. */
   let dshAccountError;
   async function dshAccountHint() {
@@ -225,7 +227,20 @@ export function createService({ ctx, config, logger }) {
         },
         workspace: roots[0] ?? { root: config.workspaceRoot ?? process.cwd(), name: '' },
         roots,
+        // Retention for the answer files this panel inserted as attachments:
+        // policy plus the last sweep, so "why did my attachment disappear" and
+        // "is anything cleaning up" are answerable from one request.
+        attachmentRetention: {
+          retentionDays: config.attachmentRetentionDays,
+          pruneReferenced: config.attachmentPruneReferenced === true,
+          lastSweep: attachmentGcSummary,
+        },
       };
+    },
+
+    /** Remember the newest retention sweep for `status`. */
+    recordAttachmentGc(summary) {
+      attachmentGcSummary = summary ?? null;
     },
 
     /** Validate a pasted `userToken` and store it. */

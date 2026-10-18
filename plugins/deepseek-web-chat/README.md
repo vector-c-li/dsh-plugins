@@ -133,7 +133,7 @@ over from before, plus the installed bundle. Disable one of them in **Plugins**,
 - installed from git? keep the bundle and disable the `file://` row (or delete that row from
   `$DSH_HOME/profiles/desktop/cordis.patch.yml`).
 
-`v0.6.0` and later log a readable warning for this case instead of failing activation.
+`v0.6.1` and later log a readable warning for this case instead of failing activation.
 
 **`连接 GitHub 超时` / `无法访问 GitHub` while installing**
 The Host reaches GitHub through git, so a blocked direct route fails the install even when a browser
@@ -214,11 +214,28 @@ Storage, honestly:
 
 - the bytes go to **DSH's own content-addressed attachment store** (`$DSH_HOME/attachments/v1/`), which
   dedupes identical bytes (inserting the same answer twice stores nothing new);
-- DSH **never prunes** that store — upstream documents attachment retention/GC as deferred — so chips do
-  grow it over time. This plugin writes **no file of its own**, so there is nothing of ours to sweep;
-- if you want to reclaim space, delete old objects under `$DSH_HOME/attachments/v1/file-objects` and
-  `…/files` yourself; sessions that already consumed them keep their transcripts, only re-reading an old
-  attachment would fail. The text button stores nothing at all.
+- DSH itself never prunes that store, so the panel runs its **own retention sweep** over the files it
+  created (see below);
+- the text button stores nothing at all.
+
+### Retention sweep
+
+`lib/host/attachment-gc.js` runs at mount and then every 6 hours:
+
+| Setting | Default | Effect |
+|---|---|---|
+| `attachmentRetentionDays` | `7` | Delete `answer-*.md` files older than this. `0` disables the sweep. |
+| `attachmentPruneReferenced` | `false` | When `false`, a file that a stored conversation still references is **kept** regardless of age. |
+
+The sweep only ever looks at `answer-*.md` — the name this panel gives its insertions — so images and
+files you attached by hand are never candidates. It reads the session logs (one zstd frame per append,
+all frames decoded) and collects every `sha256:<hash>` they mention; a hash that still appears keeps its
+object. The shared content object is removed only when the last name pointing at it is gone. The newest
+run is published in `status.attachmentRetention`, and the host logs a one-line summary whenever it frees
+space.
+
+If the runtime cannot decode zstd, the sweep degrades to **age-only** pruning and says so in
+`status.attachmentRetention.lastSweep.mode`, rather than assuming "no references".
 
 ## Interface language
 
@@ -255,6 +272,10 @@ The whole batch goes through the same `insertIntoComposer` call, so the caret mo
 composer is focused when it ends. `joinAnswers()` in `composer-bridge.js` owns the ordering,
 separators, numbering and limits; the panel only renders the bar and passes the selection.
 
+The bar's **Attach N** button sends the same joined document as **one** file attachment
+(`answer-batch-<n>-<stamp>.md`), so a long selection stays a single chip. It uses the same limits, the same
+confirmation, and the same text fallback as **Insert N**.
+
 ## Configuration
 
 All keys are optional; they go in the row's `config` block.
@@ -271,6 +292,8 @@ All keys are optional; they go in the row's `config` block.
 | `maxFileBytes` | `200000` | Per-file cap when inlining context. |
 | `maxContextBytes` | `400000` | Total context cap; overflow is truncated with a note. |
 | `sessionPageSize` | `30` | Conversations per page (upstream clamps to 2–100). |
+| `attachmentRetentionDays` | `7` | Retention for `answer-*.md` attachments the panel inserted; `0` disables the sweep. |
+| `attachmentPruneReferenced` | `false` | Also prune attachments a stored conversation still references (age-only). |
 | `wasmPath` | `assets/sha3_wasm_bg.wasm` | Proof-of-work module. |
 
 ## How context works
@@ -297,6 +320,7 @@ node scripts/panel-refs-check.mjs      # panel script reads only declared fields
 node scripts/composer-bridge-check.mjs # composer insertion tiers (fake DOM)
 node scripts/batch-insert-check.mjs        # multi-select ordering, separators, limits
 node scripts/ui-copy-check.mjs             # both languages agree, no stray literals
+node scripts/attachment-gc-check.mjs       # retention: referenced kept, ours pruned
 node scripts/live-check.mjs            # against a running DSH (mints a browser cookie)
 node scripts/live-chat.mjs --dsh-session <id>   # real answer, prints text + citations
 node scripts/preview.mjs               # static preview server for the panel UI

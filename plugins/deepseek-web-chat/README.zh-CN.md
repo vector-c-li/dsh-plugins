@@ -131,7 +131,7 @@ ln -s ~/dsh-plugins/plugins/deepseek-web-chat ~/.dsh/profiles/desktop/node_modul
 - 从检出目录开发：保留 `file://` 那行，把组合包卸掉；
 - 从 git 安装：保留组合包，停用（或从 `$DSH_HOME/profiles/desktop/cordis.patch.yml` 删掉）`file://` 那行。
 
-`v0.6.0` 起，这种情况会打印一条可读的警告，而不是让整行启用失败。
+`v0.6.1` 起，这种情况会打印一条可读的警告，而不是让整行启用失败。
 
 **安装时报 `连接 GitHub 超时` / `无法访问 GitHub`**
 Host 是通过 **git** 去取 GitHub 的，所以浏览器能开、直连被墙时安装仍会超时。两条出路：
@@ -175,6 +175,8 @@ git 安装是快照：再粘一次 spec（或 `dsh plugin --profile desktop add 
 | `maxFileBytes` | `200000` | 单个文件内联上限。 |
 | `maxContextBytes` | `400000` | 上下文总量上限，超出会截断并标注。 |
 | `sessionPageSize` | `30` | 每页会话数（上游限制 2–100）。 |
+| `attachmentRetentionDays` | `7` | 本面板插入的 `answer-*.md` 保留天数；`0` 关闭清理。 |
+| `attachmentPruneReferenced` | `false` | 连被会话引用的附件也按年龄清理。 |
 | `wasmPath` | `assets/sha3_wasm_bg.wasm` | 工作量证明模块。 |
 
 ## 上下文怎么进提示词
@@ -226,10 +228,25 @@ chip，会自动改为插入文本，并在 toast 里说明 —— 这一下点�
 
 - 字节进入 **DSH 自己的内容寻址附件库**（`$DSH_HOME/attachments/v1/`），相同内容只存一份
   （同一回答反复插入不会重复占空间）；
-- DSH **不会自动清理**这个库（上游把 attachment 的保留/GC 列为 deferred），所以 chip 用久了确实会变大。
-  **本插件自己不写任何文件**，因此没有"我们的目录"需要定时清；
-- 想回收空间就自己删 `$DSH_HOME/attachments/v1/file-objects` 与 `…/files` 下的旧对象；已经消费过它的
-  会话转录不受影响，只有"重新读取旧附件"会失败。用文本按钮则完全不占空间。
+- DSH 自己不会清理这个库，所以面板对**自己创建的文件**做保留期清理（见下节）；
+- 用文本按钮则完全不占空间。
+
+### 保留期清理（自动）
+
+`lib/host/attachment-gc.js` 在挂载后跑一次，之后每 6 小时一次：
+
+| 配置 | 默认 | 效果 |
+|---|---|---|
+| `attachmentRetentionDays` | `7` | 删除超过这么多天的 `answer-*.md`；`0` 关闭清理 |
+| `attachmentPruneReferenced` | `false` | 为 `false` 时，**任何被会话引用过的文件一律保留**，不看年龄 |
+
+只会看 `answer-*.md`（本面板给插入文件起的名字），所以你手动附的图片、文件永远不是候选。
+清理会解析会话日志（每次追加一个 zstd frame，逐帧解码）收集其中所有 `sha256:<hash>`：仍被引用的 hash
+保留；共享的内容对象只有在一个名字都不剩时才删。最近一次结果发布在 `status.attachmentRetention`，
+真的释放了空间时宿主会打一行日志。
+
+如果运行时无法解码 zstd，清理会退化为**纯按年龄**，并在
+`status.attachmentRetention.lastSweep.mode` 里写明，而不是假装"没有引用"。
 
 ## 界面中英文切换
 
@@ -269,6 +286,9 @@ DSH 自己的类名是 CSS-module 哈希，不作依赖。
 排序、分隔符、编号与上限都由 `composer-bridge.js` 的 `joinAnswers()` 负责；面板只负责渲染操作条
 和把选中项传进去。
 
+操作条上的 **附件 N 条** 把同一份合并文档作为**一个**附件插入（`answer-batch-<n>-<stamp>.md`），
+长选集因此只留一个 chip；上限、确认弹窗与文本降级都和 **插入 N 条** 一致。
+
 ## 开发
 
 ```powershell
@@ -279,6 +299,7 @@ node scripts/wasm-fallback-check.mjs   # 没有 assets 的安装：下载一次�
 node scripts/panel-refs-check.mjs      # panel script reads only declared fields
 node scripts/composer-bridge-check.mjs # composer insertion tiers (fake DOM)
 node scripts/ui-copy-check.mjs             # 两语言键一致、无残留字面量
+node scripts/attachment-gc-check.mjs       # 清理策略：会话引用的保留、我们插入的按期限删
 node scripts/batch-insert-check.mjs        # multi-select ordering, separators, limits
 node scripts/live-check.mjs            # 对着运行中的 DSH（自签浏览器 cookie）
 node scripts/live-chat.mjs --dsh-session <id>   # 真实提问，打印答案与引用

@@ -5,12 +5,18 @@
  * reload without restarting the application.
  */
 import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
+import path from 'node:path';
 
 // Imported through this module's own revision so a plugin reload sees edited
 // sources rather than Node's cached modules.
 const REV = new URL(import.meta.url).searchParams.get('rev') ?? '';
 const load = (specifier) => import(new URL(`${specifier}${REV ? `?rev=${REV}` : ''}`, import.meta.url).href);
-const [{ createService }, { registerRoutes }] = await Promise.all([load('./service.js'), load('./routes.js')]);
+const [{ createService }, { registerRoutes }, { startAttachmentGc }] = await Promise.all([
+  load('./service.js'),
+  load('./routes.js'),
+  load('./attachment-gc.js'),
+]);
 
 const DEFAULTS = {
   routePrefix: '/deepseek-web',
@@ -23,6 +29,10 @@ const DEFAULTS = {
   maxFileBytes: 200_000,
   maxContextBytes: 400_000,
   sessionPageSize: 30,
+  // Retention for `answer-*.md` files this panel inserted as attachments, in the
+  // harness attachment store. 0 disables the sweep.
+  attachmentRetentionDays: 7,
+  attachmentPruneReferenced: false,
 };
 
 /** Absolute path of the vendored proof-of-work module. */
@@ -48,8 +58,12 @@ export function resolveConfig(raw) {
       throw new Error(`deepseek-web-chat: ${field} must be a positive integer`);
     }
   }
+  if (!Number.isInteger(config.attachmentRetentionDays) || config.attachmentRetentionDays < 0) {
+    throw new Error('deepseek-web-chat: attachmentRetentionDays must be 0 (disabled) or a positive integer');
+  }
   // The web API rejects a page size below 2 ("ILLEGAL_COUNT").
   config.sessionPageSize = Math.min(Math.max(config.sessionPageSize, 2), 100);
+  config.dshHome = input.dshHome ?? process.env.DSH_HOME ?? path.join(homedir(), '.dsh');
   return config;
 }
 
@@ -90,6 +104,27 @@ export function mount(ctx, rawConfig = {}) {
   ctx.effect(() => () => {
     dispose();
   });
+
+  // Retention for the answer files the panel inserts as attachments. They live in
+  // DSH's own attachment store, which never prunes itself; this sweep only ever
+  // touches `answer-*.md` and keeps anything a stored conversation references.
+  const retentionDays = config.attachmentRetentionDays ?? 7;
+  const gc = startAttachmentGc({
+    home: config.dshHome,
+    retentionDays,
+    pruneReferenced: config.attachmentPruneReferenced === true,
+    onSummary: (summary) => {
+      service.recordAttachmentGc?.(summary);
+      if (summary.error !== undefined) logger.warn(`attachment retention sweep failed: ${summary.error}`);
+      else if (summary.deleted > 0) {
+        logger.info?.(
+          `attachment retention: removed ${summary.deleted} answer file(s), freed ${Math.round(summary.freedBytes / 1024)} KB ` +
+            `(kept ${summary.keptReferenced} referenced, mode ${summary.mode})`,
+        );
+      }
+    },
+  });
+  ctx.effect(() => () => gc.dispose());
 
   logger.info?.(`DeepSeek Chat panel mounted at ${config.routePrefix}/`);
 }

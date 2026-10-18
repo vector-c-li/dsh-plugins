@@ -75,6 +75,8 @@ export const PANEL_COPY = {
     attached: '已作为附件插入，可继续编辑',
     attachedFallback: '当前 DSH 未能识别附件，已改为插入文本',
     attachFailed: '附件插入失败，也没有复制成功；请用「复制」按钮手动粘贴',
+    attachSelected: '附件 {n} 条',
+    attachedSelected: '已把 {n} 条回答合并为一个附件插入，可继续编辑',
   },
   en: {
     copy: 'Copy',
@@ -98,6 +100,8 @@ export const PANEL_COPY = {
     attached: 'Inserted as a file attachment — edit and send when ready',
     attachedFallback: 'This DSH build did not recognise the attachment, so the text was inserted instead',
     attachFailed: 'Attachment insert failed and the clipboard write failed too; use Copy and paste manually',
+    attachSelected: 'Attach {n}',
+    attachedSelected: 'Inserted {n} answers as one file — edit and send when ready',
   },
 };
 

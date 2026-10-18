@@ -77,6 +77,7 @@ const el = {
   selectInsert: document.getElementById('select-insert'),
   selectCopy: document.getElementById('select-copy'),
   selectCancel: document.getElementById('select-cancel'),
+  selectAttach: document.getElementById('select-attach'),
   langToggle: document.getElementById('lang-toggle'),
   emptyTitle: document.getElementById('empty-title'),
   emptyTagline: document.getElementById('empty-tagline'),
@@ -714,9 +715,11 @@ function renderSelectBar() {
   const count = state.selected.size;
   el.selectCount.textContent = pf('selectedCount', { n: count });
   el.selectInsert.textContent = pf('insertSelected', { n: count });
+  el.selectAttach.textContent = pf('attachSelected', { n: count });
   el.selectCopy.textContent = pf('copySelected', { n: count });
   el.selectCancel.textContent = p('cancel');
   el.selectInsert.disabled = count === 0;
+  el.selectAttach.disabled = count === 0;
   el.selectCopy.disabled = count === 0;
   el.selectBar.hidden = false;
 }
@@ -796,6 +799,50 @@ async function copySelectedAnswers() {
     toast(String(error?.message ?? error));
   }
   exitSelectMode();
+}
+
+/**
+ * Batch attach: the same joined document, as **one** file attachment.
+ *
+ * One chip for the whole selection, so a long multi-answer context stays a single
+ * file in the composer instead of a wall of pasted text. Falls back to the text
+ * insert when this DSH build does not turn the paste into a chip.
+ */
+async function attachSelectedAnswers() {
+  const answers = selectedAnswers();
+  if (answers.length === 0) {
+    toast(p('selectEmpty'));
+    return;
+  }
+  const batch = joinAnswers(answers, { lang: state.lang });
+  const run = async () => {
+    const name = `answer-batch-${batch.count}-${Date.now().toString(36)}.md`;
+    try {
+      const result = await insertAsAttachment(batch.text, { lang: state.lang, name });
+      if (result.ok) {
+        toast(pf('attachedSelected', { n: batch.count }));
+        exitSelectMode();
+        return;
+      }
+      const fallback = await insertIntoHostComposer(batch.text, { lang: state.lang });
+      if (fallback.ok) toast(p('attachedFallback'));
+      else if (fallback.via === 'clipboard' && !String(fallback.reason ?? '').includes('no-clipboard')) {
+        toast(p('insertedClipboard'));
+      } else {
+        toast(p('attachFailed'));
+      }
+    } catch (error) {
+      toast(String(error?.message ?? error));
+    }
+    exitSelectMode();
+  };
+  if (batch.overLimit) {
+    confirmBatch(batch, () => {
+      void run();
+    });
+    return;
+  }
+  await run();
 }
 
 /**
@@ -1547,9 +1594,12 @@ document.addEventListener('keydown', (event) => {
   exitSelectMode();
 });
 
-// Multi-select bar: insert / copy the whole selection, or leave the mode.
+// Multi-select bar: insert / attach / copy the whole selection, or leave the mode.
 el.selectInsert.addEventListener('click', () => {
   insertSelectedAnswers().catch((error) => toast(String(error?.message ?? error)));
+});
+el.selectAttach.addEventListener('click', () => {
+  attachSelectedAnswers().catch((error) => toast(String(error?.message ?? error)));
 });
 el.selectCopy.addEventListener('click', () => {
   copySelectedAnswers().catch((error) => toast(String(error?.message ?? error)));
