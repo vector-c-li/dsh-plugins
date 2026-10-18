@@ -163,7 +163,9 @@ function showGate(visible) {
   document.body.dataset.gate = visible ? 'on' : 'off';
   if (visible) {
     renderGate();
-    gate.account.focus();
+    // The token box is the only sign-in input; guard anyway so a markup change
+    // cannot turn the whole panel into a fatal-error banner.
+    gate.token?.focus();
   }
 }
 

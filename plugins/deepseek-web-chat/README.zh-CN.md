@@ -129,7 +129,7 @@ ln -s ~/dsh-plugins/plugins/deepseek-web-chat ~/.dsh/profiles/desktop/node_modul
 - 从检出目录开发：保留 `file://` 那行，把组合包卸掉；
 - 从 git 安装：保留组合包，停用（或从 `$DSH_HOME/profiles/desktop/cordis.patch.yml` 删掉）`file://` 那行。
 
-`v0.5.3` 起，这种情况会打印一条可读的警告，而不是让整行启用失败。
+`v0.5.4` 起，这种情况会打印一条可读的警告，而不是让整行启用失败。
 
 **安装时报 `连接 GitHub 超时` / `无法访问 GitHub`**
 Host 是通过 **git** 去取 GitHub 的，所以浏览器能开、直连被墙时安装仍会超时。两条出路：
