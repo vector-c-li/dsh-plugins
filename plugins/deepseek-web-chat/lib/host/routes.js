@@ -145,6 +145,21 @@ export function registerRoutes(webServer, service, logger, config, getConnection
         }
         return;
       }
+      if (action === 'session-context') {
+        // Preview only: render one session at one level so the picker can show what
+        // the chosen level would actually send, without uploading or sending.
+        try {
+          const preview = await service.sessionContextPreview({
+            id: url.searchParams.get('id') ?? '',
+            mode: url.searchParams.get('mode') ?? undefined,
+            headChars: Number(url.searchParams.get('headChars') ?? '') || undefined,
+          });
+          sendJson(res, 200, { ok: true, ...preview });
+        } catch (error) {
+          await sendError(res, error, service);
+        }
+        return;
+      }
       sendJson(res, 404, { ok: false, error: `Unknown action: ${action}` });
       return;
     }

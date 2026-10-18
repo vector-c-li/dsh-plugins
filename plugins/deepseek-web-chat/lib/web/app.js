@@ -1203,8 +1203,9 @@ function applyContextSummary(summary) {
 }
 
 async function openSessionPicker() {
+  /** The row the user picked; the preview pane follows it. */
+  const picked = { session: null, request: 0 };
   const status = h('div', { class: 'status-line', text: ui('readingSessions') });
-  const modeBar = renderModeBar();
   const search = h('input', {
     class: 'session-search',
     type: 'search',
@@ -1213,13 +1214,150 @@ async function openSessionPicker() {
   });
   const list = h('div', { class: 'sessions' });
   const hint = h('div', { class: 'status-line' });
-  const body = h('div', { class: 'session-picker' }, modeBar, search, list, hint);
+  const pickHint = h('div', { class: 'status-line', text: ui('dshPickHint') });
+
+  const modeBar = h('div', { class: 'mode-bar', role: 'group', 'aria-label': ui('modeLabel') });
+  const modeDesc = h('div', { class: 'mode-desc' });
+  const stats = h('div', { class: 'preview-stats' });
+  const sample = h('div', { class: 'preview-sample' });
+  const preview = h('div', { class: 'session-preview', hidden: true }, modeBar, modeDesc, stats, sample);
+  const addButton = h('button', { class: 'primary', type: 'button', text: ui('dshAddContext') });
+
+  const body = h('div', { class: 'session-picker' }, pickHint, search, list, hint, preview);
   openModal({
     title: ui('dshSessionsTitle'),
     body: [status, body],
-    footer: [h('button', { text: ui('close'), onclick: closeModal })],
+    footer: [h('button', { text: ui('close'), onclick: closeModal }), addButton],
   });
   search.hidden = true;
+  preview.hidden = true;
+  addButton.disabled = true;
+
+  const modeText = (mode) => {
+    if (mode === 'tools') return { label: ui('modeTools'), desc: ui('modeToolsHint') };
+    if (mode === 'file') return { label: ui('modeFile'), desc: ui('modeFileHint') };
+    return { label: ui('modeTranscript'), desc: ui('modeTranscriptHint') };
+  };
+
+  /** Re-render the mode buttons for the current choice. */
+  const paintModes = () => {
+    modeBar.replaceChildren();
+    for (const mode of ['transcript', 'tools', 'file']) {
+      const { label, desc } = modeText(mode);
+      const active = state.sessionMode === mode;
+      const button = h('button', {
+        class: 'ghost',
+        type: 'button',
+        text: label,
+        title: desc,
+        'aria-pressed': String(active),
+      });
+      button.addEventListener('click', () => {
+        state.sessionMode = mode;
+        paintModes();
+        refreshPreview();
+      });
+      modeBar.append(button);
+    }
+    modeDesc.textContent = modeText(state.sessionMode).desc;
+  };
+
+  /** Fetch the host's rendering of the picked session at the chosen level. */
+  const refreshPreview = async () => {
+    if (picked.session === null) return;
+    const ticket = (picked.request += 1);
+    preview.hidden = false;
+    stats.textContent = ui('dshPreviewLoading');
+    sample.textContent = '';
+    try {
+      const query = new URLSearchParams({ id: picked.session.id, mode: state.sessionMode, headChars: '1600' });
+      const result = await request(`session-context?${query.toString()}`);
+      if (ticket !== picked.request) return;
+      const kb = Math.max(1, Math.round((result.bytes ?? 0) / 1024));
+      const parts = [
+        ui('dshKeptOfTotal', { kept: result.rendered ?? 0, total: result.entries ?? 0 }),
+        ui('dshSize', { size: kb }),
+      ];
+      if (result.mode === 'file') parts.push(ui('dshFilePreviewNote', { name: result.fileName ?? '', size: kb }));
+      else if (result.omitted > 0) parts.push(ui('dshOnlyRecent', { kept: result.rendered ?? 0 }));
+      stats.textContent = parts.join(' · ');
+      const head = result.preview ?? '';
+      const tail = result.tail ?? '';
+      // Head plus tail: the opening shows the conversation, the tail shows what
+      // this level adds (tool calls and results only exist further down).
+      sample.textContent = tail !== '' && !head.includes(tail) ? `${head}\n\n??\n\n${tail}` : head;
+    } catch (error) {
+      if (ticket !== picked.request) return;
+      stats.textContent = ui('readFailed', { message: String(error?.message ?? error) });
+    }
+  };
+
+  const select = (session, row) => {
+    picked.session = session;
+    for (const other of list.children) other.classList.toggle('selected', other === row);
+    pickHint.textContent = session.title || ui('untitled');
+    addButton.disabled = false;
+    refreshPreview();
+  };
+
+  const rowFor = (session) => {
+    const excerpt = h('div', { class: 'session-excerpt', hidden: true });
+    const count = session.messages ?? 0;
+    const kept = session.kept ?? count;
+    const meta = [
+      session.truncated === true ? ui('dshKeptOfTotal', { kept, total: count }) : ui('messagesCount', { n: count }),
+      session.bytes > 0 ? ui('dshSize', { size: Math.max(1, Math.round(session.bytes / 1024)) }) : null,
+      session.createdAt ? formatRelative(session.createdAt) : null,
+    ]
+      .filter((part) => part !== null)
+      .join(' · ');
+
+    const row = h('div', {
+      class: 'session-row',
+      'data-search': `${session.title} ${session.preview?.ask ?? ''} ${session.preview?.answer ?? ''}`.toLowerCase(),
+    });
+    const main = h('button', { class: 'session-main', type: 'button' });
+    main.append(
+      h('span', { class: 't', text: session.title || ui('untitled') }),
+      h('span', { class: 'd', text: meta }),
+      session.preview?.ask
+        ? h('span', { class: 'p' }, h('em', { text: `${ui('dshAsk')} ` }), h('span', { text: session.preview.ask }))
+        : null,
+      session.preview?.answer
+        ? h('span', { class: 'p' }, h('em', { text: `${ui('dshAnswer')} ` }), h('span', { text: session.preview.answer }))
+        : null,
+    );
+    main.addEventListener('click', () => select(session, row));
+
+    const toggle = h('button', { class: 'ghost session-toggle', type: 'button', text: ui('dshView') });
+    toggle.addEventListener('click', () => {
+      const open = excerpt.hidden;
+      if (open && excerpt.childElementCount === 0) {
+        for (const line of session.excerpt ?? []) excerpt.append(h('div', { class: 'line', text: line }));
+        if (excerpt.childElementCount === 0) excerpt.append(h('div', { class: 'line', text: ui('noContent') }));
+      }
+      excerpt.hidden = !open;
+      toggle.textContent = open ? ui('dshHide') : ui('dshView');
+    });
+
+    row.append(main, h('div', { class: 'session-side' }, toggle, excerpt));
+    return row;
+  };
+
+  addButton.addEventListener('click', () => {
+    if (picked.session === null) return;
+    addContext({
+      kind: 'session',
+      id: picked.session.id,
+      mode: state.sessionMode,
+      label: picked.session.title || ui('sessionLabel', { id: picked.session.id.slice(0, 8) }),
+      hint: modeText(state.sessionMode).label,
+    });
+    toast(ui('transcriptNotice'));
+    closeModal();
+  });
+
+  paintModes();
   try {
     const query = new URLSearchParams({ limit: '15' });
     if (state.workspace?.root) query.set('cwd', state.workspace.root);
@@ -1231,60 +1369,6 @@ async function openSessionPicker() {
       return;
     }
     status.remove();
-
-    const rowFor = (session) => {
-      const excerpt = h('div', { class: 'session-excerpt', hidden: true });
-      // `messages` is every entry the reader found; `kept` is what the 40-entry cap
-      // leaves, so a long conversation says "40 of 59" instead of claiming 40 is it.
-      const count = session.messages ?? 0;
-      const kept = session.kept ?? count;
-      const meta = [
-        session.truncated === true ? ui('dshKeptOfTotal', { kept, total: count }) : ui('messagesCount', { n: count }),
-        session.bytes > 0 ? ui('dshSize', { size: Math.max(1, Math.round(session.bytes / 1024)) }) : null,
-        session.createdAt ? formatRelative(session.createdAt) : null,
-      ]
-        .filter((part) => part !== null)
-        .join(' · ');
-
-      const row = h('div', { class: 'session-row', 'data-search': `${session.title} ${session.preview?.ask ?? ''} ${session.preview?.answer ?? ''}`.toLowerCase() });
-      const add = h('button', { class: 'session-main', type: 'button' });
-      add.append(
-        h('span', { class: 't', text: session.title || ui('untitled') }),
-        h('span', { class: 'd', text: meta }),
-        session.preview?.ask
-          ? h('span', { class: 'p' }, h('em', { text: `${ui('dshAsk')} ` }), h('span', { text: session.preview.ask }))
-          : null,
-        session.preview?.answer
-          ? h('span', { class: 'p' }, h('em', { text: `${ui('dshAnswer')} ` }), h('span', { text: session.preview.answer }))
-          : null,
-        session.truncated === true ? h('span', { class: 'cap', text: ui('dshOnlyRecent', { kept }) }) : null,
-      );
-      add.addEventListener('click', () => {
-        addContext({
-          kind: 'session',
-          id: session.id,
-          mode: state.sessionMode,
-          label: session.title || ui('sessionLabel', { id: session.id.slice(0, 8) }),
-          hint: `${modeLabel(state.sessionMode)} · ${ui('messagesCount', { n: session.messages ?? 0 })}`,
-        });
-        toast(ui('transcriptNotice'));
-        closeModal();
-      });
-
-      const toggle = h('button', { class: 'ghost session-toggle', type: 'button', text: ui('dshView') });
-      toggle.addEventListener('click', () => {
-        const open = excerpt.hidden;
-        if (open && excerpt.childElementCount === 0) {
-          for (const line of session.excerpt ?? []) excerpt.append(h('div', { class: 'line', text: line }));
-          if (excerpt.childElementCount === 0) excerpt.append(h('div', { class: 'line', text: ui('noContent') }));
-        }
-        excerpt.hidden = !open;
-        toggle.textContent = open ? ui('dshHide') : ui('dshView');
-      });
-
-      row.append(add, h('div', { class: 'session-side' }, toggle, excerpt));
-      return row;
-    };
 
     for (const session of sessions) list.append(rowFor(session));
     search.hidden = false;

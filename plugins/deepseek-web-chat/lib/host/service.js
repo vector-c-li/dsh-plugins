@@ -28,7 +28,7 @@ const { renderSession, SESSION_MODES } = renderModule;
 const RECORD_KEY = 'deepseek-web-chat/account';
 
 /** Build tag shown in the panel; bump it whenever the panel document changes. */
-const PANEL_VERSION = '0.7.0';
+const PANEL_VERSION = '0.7.1';
 
 /** A DSH session id: `session-<uuid>`, tolerating a bare uuid. */
 const SESSION_ID = /^(?:session-)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
@@ -350,6 +350,62 @@ export function createService({ ctx, config, logger }) {
      * dragover delivery into an iframe is not something a plugin can rely on.
      * @param {{limit?: number, cwd?: string}} [request]
      */
+    /**
+     * Render one session at one fidelity level, for the picker's preview pane.
+     *
+     * Nothing leaves the machine here: no upload, no completion. The picker uses it
+     * so that choosing \u6b63\u6587 / \u542b\u5de5\u5177 / \u6587\u4ef6\u9644\u4ef6 changes both the explanation and the
+     * sample the user sees, instead of the choice only taking effect after sending.
+     * @param {{id?: string, mode?: string, headChars?: number}} request
+     */
+    async sessionContextPreview(request = {}) {
+      const id = typeof request.id === 'string' ? request.id.trim() : '';
+      if (!SESSION_ID.test(id)) throw new Error('\u8fd9\u4e2a\u9009\u62e9\u4e0d\u662f\u6709\u6548\u7684 DSH \u4f1a\u8bdd id');
+      const mode = request.mode === 'file' || SESSION_MODES.includes(request.mode) ? request.mode : config.sessionContextMode;
+      const deps = { persistence: ctx.get('sessionPersistence'), background: ctx.get('sessionQuery'), logger, home: config.dshHome };
+      const headChars = Math.min(Math.max(Number.isInteger(request.headChars) ? request.headChars : 1200, 200), 4000);
+      if (mode === 'file') {
+        // What the uploaded file would contain, quoted from the full rendering.
+        const rendered = await renderSessionFile(id, { deps });
+        return {
+          id,
+          mode,
+          title: rendered.title,
+          entries: rendered.entries,
+          total: rendered.entries,
+          rendered: rendered.entries,
+          bytes: rendered.bytesTotal,
+          omitted: 0,
+          omittedBytes: 0,
+          truncated: false,
+          fileName: rendered.fileName,
+          preview: rendered.head.slice(0, headChars),
+          // The tail is where tool lines live in the rich levels, so the picker
+          // can show a sample of the level's distinctive content, not just the
+          // same opening message for every mode.
+          tail: rendered.text.slice(-600),
+        };
+      }
+      const rendered = await renderSessionSource(
+        { id, mode },
+        { mode, maxBytes: Math.min(config.maxSessionBytes ?? config.maxContextBytes, config.maxContextBytes), deps },
+      );
+      return {
+        id,
+        mode,
+        title: rendered.title,
+        entries: rendered.entries,
+        total: rendered.entries,
+        rendered: rendered.rendered,
+        bytes: rendered.bytes,
+        omitted: rendered.omitted,
+        omittedBytes: rendered.omittedBytes,
+        truncated: rendered.truncated,
+        preview: rendered.text.slice(0, headChars),
+        tail: rendered.text.slice(-600),
+      };
+    },
+
     async dshSessions(request = {}) {
       const persistence = ctx.get('sessionPersistence');
       if (persistence === undefined || typeof persistence.list !== 'function') {

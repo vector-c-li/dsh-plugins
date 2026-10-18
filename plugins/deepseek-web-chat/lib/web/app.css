@@ -745,3 +745,33 @@ ol.sources a:hover { text-decoration: underline; }
 }
 .session-excerpt[hidden] { display: none; }
 .session-excerpt .line { margin-bottom: 4px; }
+
+/* ---------- session preview pane (step 2 of the picker) ---------- */
+.session-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--dsw-border);
+  padding-top: 8px;
+}
+.session-preview[hidden] { display: none; }
+.mode-desc { font-size: 11px; color: var(--dsw-text-3); line-height: 1.45; }
+.preview-stats { font-size: 11px; color: var(--dsw-text-2); }
+.preview-sample {
+  max-height: 190px;
+  overflow: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-border);
+  border-radius: 6px;
+  background: var(--dsw-bg);
+  color: var(--dsw-text-2);
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.session-row.selected {
+  border-color: var(--dsw-accent);
+  box-shadow: inset 0 0 0 1px var(--dsw-accent);
+}
