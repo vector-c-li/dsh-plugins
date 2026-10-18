@@ -69,4 +69,5 @@ node "$env:USERPROFILE\dsh-plugins\plugins\deepseek-web-chat\scripts\fetch-wasm.
 
 ## 许可
 
-[MIT](LICENSE)。
+本仓库代码使用 [MIT](LICENSE)。第三方内容（DeepSeek 的工作量证明模块、chat.deepseek.com 接口、
+商标）见 [`NOTICE.md`](NOTICE.md)。

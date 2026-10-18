@@ -73,4 +73,5 @@ machine — read it before attaching files or conversations as context.
 
 ## Licence
 
-[MIT](LICENSE).
+[MIT](LICENSE) for the code here. Third-party material (DeepSeek's proof-of-work module, the
+chat.deepseek.com API, trademarks) is covered by [`NOTICE.md`](NOTICE.md).
