@@ -71,7 +71,22 @@ export function mount(ctx, rawConfig = {}) {
   // Resolved per request, not captured: the connection service can be provided
   // after this plugin mounts, and a captured `undefined` silently disabled the
   // panel's admission check.
-  const dispose = registerRoutes(webServer, service, logger, config, () => ctx.get('connection'));
+  let dispose;
+  try {
+    dispose = registerRoutes(webServer, service, logger, config, () => ctx.get('connection'));
+  } catch (error) {
+    // Route ownership is a composition contract: two enabled copies of this
+    // plugin (a local development row next to the installed bundle) cannot share
+    // one prefix. Say that plainly instead of letting the row fail with a bare
+    // "duplicate prefix route".
+    if (!/duplicate .*route/iu.test(String(error?.message ?? ''))) throw error;
+    logger.warn(
+      `${config.routePrefix} is already served by another row, so this row stays inactive. ` +
+        'Disable one of them — a local development row and the installed bundle cannot both be enabled — then reload. ' +
+        String(error.message),
+    );
+    return;
+  }
   ctx.effect(() => () => {
     dispose();
   });

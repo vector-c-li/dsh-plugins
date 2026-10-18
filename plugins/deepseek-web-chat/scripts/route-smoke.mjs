@@ -58,6 +58,13 @@ const webServer = {
   },
 };
 
+/** Same table semantics as the real server: a second prefix route throws. */
+const busyWebServer = {
+  register() {
+    throw new Error('webserver: duplicate prefix route "/deepseek-web"');
+  },
+};
+
 /** Admits every request, like a request carrying the app's own browser grant. */
 const admitAll = () => ({ admit: () => ({ peer: { kind: 'owner' } }) });
 
@@ -178,6 +185,25 @@ await check('chat without a session streams an error frame', async () => {
     .filter((chunk) => chunk.startsWith('data: '))
     .map((chunk) => JSON.parse(chunk.slice(6)));
   assert.ok(frames.some((frame) => frame.type === 'error'), JSON.stringify(frames));
+});
+
+await check('a second enabled copy reports a duplicate prefix instead of crashing', async () => {
+  // Two rows enabled at once (a local dev row plus the installed bundle) share
+  // one prefix. The plugin must leave the row inactive with a readable warning,
+  // not fail activation with a bare "duplicate prefix route".
+  const warnings = [];
+  const busyCtx = {
+    ...ctx,
+    get(name) {
+      if (name === 'webServer') return busyWebServer;
+      return ctx.get(name);
+    },
+    logger: () => ({ info() {}, debug() {}, warn: (message) => warnings.push(String(message)) }),
+  };
+  await apply(busyCtx, { locale: 'zh_CN', workspaceRoot: process.cwd() });
+  assert.equal(warnings.length, 1, `expected one warning, got ${JSON.stringify(warnings)}`);
+  assert.match(warnings[0], /already served by another row/u);
+  assert.match(warnings[0], /duplicate prefix route/u);
 });
 
 await check('unknown api actions 404', async () => {

@@ -120,6 +120,27 @@ ln -s ~/dsh-plugins/plugins/deepseek-web-chat ~/.dsh/profiles/desktop/node_modul
 登录只认 `userToken`：面板上用四步图文引导你取，长版本见
 [`docs/guide.zh-CN.md`](docs/guide.zh-CN.md)。
 
+## 排错
+
+**`组件启用失败 … duplicate prefix route "/deepseek-web"`**
+有两行同时启用了、抢同一个 HTTP 前缀 —— 典型情况是之前的本地开发行（`file://…`）和刚装好的组合包都在。
+在**插件**页停用其中一个再重载：
+
+- 从检出目录开发：保留 `file://` 那行，把组合包卸掉；
+- 从 git 安装：保留组合包，停用（或从 `$DSH_HOME/profiles/desktop/cordis.patch.yml` 删掉）`file://` 那行。
+
+`v0.5.3` 起，这种情况会打印一条可读的警告，而不是让整行启用失败。
+
+**面板能打开，但侧栏没有标签页**
+Host 半和浏览器半是分开加载的：把插件关掉再打开，然后刷新 DSH 页面（还不出现就重启一次）。
+
+**`proof-of-work module is missing`**
+wasm 会在首次使用时下载到 `$DSH_HOME/cache/deepseek-web-chat/`。这条网络路径不通时，
+在插件目录跑 `node scripts/fetch-wasm.mjs`（或把 `wasmPath` 指到本地副本），然后重载。
+
+**升级**
+git 安装是快照：再粘一次 spec（或 `dsh plugin --profile desktop add …`）、启用、刷新。
+
 ## 配置
 
 所有键都可选，写在插件行的 `config` 里。

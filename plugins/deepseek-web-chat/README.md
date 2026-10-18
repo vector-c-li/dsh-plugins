@@ -122,6 +122,31 @@ Restart DSH (or toggle the plugin off/on in the Plugins page).
 Sign-in needs a `userToken`; the panel walks you through it in four illustrated steps, and
 [`docs/guide.en.md`](docs/guide.en.md) has the long version.
 
+## Troubleshooting
+
+**`组件启用失败 … duplicate prefix route "/deepseek-web"`**
+Two enabled rows claim the same HTTP prefix — typically a local development row (`file://…`) left
+over from before, plus the installed bundle. Disable one of them in **Plugins**, then reload:
+
+- developed from a checkout? keep the `file://` row and uninstall the bundle;
+- installed from git? keep the bundle and disable the `file://` row (or delete that row from
+  `$DSH_HOME/profiles/desktop/cordis.patch.yml`).
+
+`v0.5.3` and later log a readable warning for this case instead of failing activation.
+
+**The panel is served but the sidebar tab is missing**
+The Host half and the browser half load separately: toggle the plugin off/on, then refresh the DSH
+page (restart once if it still does not appear).
+
+**`proof-of-work module is missing`**
+The wasm blob is downloaded on first use into `$DSH_HOME/cache/deepseek-web-chat/`. If that network
+path is blocked, run `node scripts/fetch-wasm.mjs` in the plugin directory (or point `wasmPath` at a
+local copy) and reload.
+
+**Upgrading**
+A git install is a snapshot: paste the spec again (or `dsh plugin --profile desktop add …`) and
+enable the plugin, then refresh.
+
 ## Configuration
 
 All keys are optional; they go in the row's `config` block.
