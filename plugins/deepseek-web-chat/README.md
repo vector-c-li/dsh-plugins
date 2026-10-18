@@ -133,7 +133,7 @@ over from before, plus the installed bundle. Disable one of them in **Plugins**,
 - installed from git? keep the bundle and disable the `file://` row (or delete that row from
   `$DSH_HOME/profiles/desktop/cordis.patch.yml`).
 
-`v0.6.3` and later log a readable warning for this case instead of failing activation.
+`v0.7.0` and later log a readable warning for this case instead of failing activation.
 
 **`连接 GitHub 超时` / `无法访问 GitHub` while installing**
 The Host reaches GitHub through git, so a blocked direct route fails the install even when a browser
@@ -224,6 +224,8 @@ Storage, honestly:
 
 | Setting | Default | Effect |
 |---|---|---|
+| `sessionContextMode` | `transcript` | `transcript` / `tools` / `file`: how a loaded DSH conversation reaches the prompt. |
+| `maxSessionBytes` | `400000` | Per-session byte budget for the inline levels. |
 | `attachmentRetentionDays` | `7` | Delete `answer-*.md` files older than this. `0` disables the sweep. |
 | `attachmentPruneReferenced` | `false` | When `false`, a file that a stored conversation still references is **kept** regardless of age. |
 
@@ -326,27 +328,47 @@ with `会话 session-… 0 条消息` rows — and the footer says how many were
 
 ### What exactly gets attached
 
-The row shows `40 / 97 条` when a conversation is longer than the cap: the first number is what goes into
+A loaded conversation reaches the prompt at one of **three fidelity levels**, chosen in the picker
+(`正文 / 含工具 / 文件附件`) and remembered on the chip:
+
+| Level | What goes out | Measured on one real 12 783-event session |
+|---|---|---|
+| `transcript` (default) | user and assistant prose, compaction checkpoints marked; tool traffic and reasoning dropped — DSH's own projection | 183 KB ≈ 85k tokens |
+| `tools` | the above plus one line per tool call and a clipped (400-char) result for the newest 12 turns | 65 471 tokens as reported upstream |
+| `file` | the whole `full` rendering (every call, 4 000-char results) uploaded through the web API's file route and referenced with `ref_file_ids`, so the model reads it itself | 210 073 tokens as reported upstream |
+
+The row shows `40 / 99 条` when a conversation is longer than the cap: the first number is what goes into
 the prompt, the second is how many entries the conversation has. The rule, in order:
 
 1. **Read window.** The last 240 raw events first; if that folds into fewer than 48 entries, the window
    grows to 1200, then 4000, then the whole log. This matters because one agentic turn can be hundreds
    of events — a fixed 240-event tail once returned 3 entries for a 97-entry conversation.
-2. **Which events count.** Only `user/message` and `assistant/message`. Reasoning blocks are dropped
-   (they are the model's scratchpad), tool *results* are dropped, tool *calls* are only counted.
+2. **Which events count.** Only `user/message` and `assistant/message` (plus `tool/result` at the two rich
+   levels). Reasoning blocks are dropped — they are the model's scratchpad; tool *results* are dropped at
+   the prose level; tool *calls* are only counted there.
 3. **Folding.** Consecutive assistant events — the steps of one turn — collapse into a single
-   `助手:` entry with the prose joined by newlines and one tally line appended:
-   `（本回合使用了 3 次工具：pwsh×2, read）`.
-4. **Dropping empties.** A user message with no text, or an entry whose prose and tally are both empty,
-   contributes nothing.
-5. **Clipping.** One entry is cut at 4000 characters and marked `…（已截断）`; nothing is silently lost.
+   `助手:` entry with the prose joined by newlines.
+4. **Dropping empties.** A user message with no text, or an entry whose prose and action detail are both
+   empty, contributes nothing.
+5. **Clipping.** One entry is cut at 4000 characters and marked `…（已截断）`; nothing is lost silently.
 6. **The cap.** The newest **40 entries** are kept (`MAX_TURNS`), oldest first. Entries, not raw
    messages: one entry is one user ask or one folded turn.
-7. **Wrapping.** Lines are joined with a blank line and wrapped as
-   `<conversation title="…">…</conversation>`, then the whole context is capped by `maxContextBytes`
-   (400 000) with an explicit truncation marker.
+7. **Budget.** `maxSessionBytes` (default 400 000) per session: the oldest non-checkpoint entries are
+   dropped first, then the longest entry is shortened, with a notice. The block attributes record it:
+   `entries`, `rendered`, `bytes`, and `omitted` / `omittedBytes` when anything was left out.
+8. **Wrapping.** Lines are joined with a blank line and wrapped as
+   `<conversation id="…" title="…" mode="…">…</conversation>`, then the whole context is capped by
+   `maxContextBytes` with an explicit truncation marker.
 
-So "40 条" means at most 40 *entries* — the tail of the conversation, not necessarily all of it.
+At the `file` level the block becomes a short head plus a note that the whole transcript is attached, and
+the upload is memoised per session + rendering size. If the upload fails, the inline `tools` rendering is
+used instead and the summary marks it `uploadFallback`.
+
+The host reports what it actually sent as a `context` event, so a chip's hint becomes `含工具 · 214 KB`
+(or `正文 · 183 KB`, `文件附件 · 26 MB`) after the first request.
+
+> The context is sent on **every** turn while the chip is loaded. `file` mode therefore costs ~200k tokens
+> per message; it is the level to pick when fidelity matters more than cost.
 
 ## Development
 
@@ -357,6 +379,7 @@ node scripts/route-smoke.mjs           # HTTP surface on a fake ctx
 node scripts/wasm-fallback-check.mjs   # install without assets: download + reuse the module
 node scripts/panel-refs-check.mjs      # panel script reads only declared fields
 node scripts/dsh-sessions-check.mjs    # picker titles, previews, hidden empty sessions
+node scripts/session-render-check.mjs      # the three fidelity levels
 node scripts/composer-bridge-check.mjs # composer insertion tiers (fake DOM)
 node scripts/batch-insert-check.mjs        # multi-select ordering, separators, limits
 node scripts/ui-copy-check.mjs             # both languages agree, no stray literals

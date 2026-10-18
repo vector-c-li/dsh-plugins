@@ -29,6 +29,12 @@ const DEFAULTS = {
   maxFileBytes: 200_000,
   maxContextBytes: 400_000,
   sessionPageSize: 30,
+  // How a loaded DSH conversation reaches the prompt: 'transcript' (prose only),
+  // 'tools' (plus tool calls and clipped results) or 'file' (upload the whole
+  // rendering and reference it).
+  sessionContextMode: 'transcript',
+  // Per-session byte budget for the inline levels; unset follows maxContextBytes.
+  maxSessionBytes: 400_000,
   // Retention for `answer-*.md` files this panel inserted as attachments, in the
   // harness attachment store. 0 disables the sweep.
   attachmentRetentionDays: 7,
@@ -63,6 +69,12 @@ export function resolveConfig(raw) {
   }
   // The web API rejects a page size below 2 ("ILLEGAL_COUNT").
   config.sessionPageSize = Math.min(Math.max(config.sessionPageSize, 2), 100);
+  if (!['transcript', 'tools', 'file'].includes(config.sessionContextMode)) {
+    throw new Error('deepseek-web-chat: sessionContextMode must be "transcript", "tools" or "file"');
+  }
+  if (!Number.isInteger(config.maxSessionBytes) || config.maxSessionBytes < 1000) {
+    throw new Error('deepseek-web-chat: maxSessionBytes must be an integer of at least 1000');
+  }
   config.dshHome = input.dshHome ?? process.env.DSH_HOME ?? path.join(homedir(), '.dsh');
   return config;
 }

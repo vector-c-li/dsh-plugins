@@ -131,7 +131,7 @@ ln -s ~/dsh-plugins/plugins/deepseek-web-chat ~/.dsh/profiles/desktop/node_modul
 - 从检出目录开发：保留 `file://` 那行，把组合包卸掉；
 - 从 git 安装：保留组合包，停用（或从 `$DSH_HOME/profiles/desktop/cordis.patch.yml` 删掉）`file://` 那行。
 
-`v0.6.3` 起，这种情况会打印一条可读的警告，而不是让整行启用失败。
+`v0.7.0` 起，这种情况会打印一条可读的警告，而不是让整行启用失败。
 
 **安装时报 `连接 GitHub 超时` / `无法访问 GitHub`**
 Host 是通过 **git** 去取 GitHub 的，所以浏览器能开、直连被墙时安装仍会超时。两条出路：
@@ -175,6 +175,8 @@ git 安装是快照：再粘一次 spec（或 `dsh plugin --profile desktop add 
 | `maxFileBytes` | `200000` | 单个文件内联上限。 |
 | `maxContextBytes` | `400000` | 上下文总量上限，超出会截断并标注。 |
 | `sessionPageSize` | `30` | 每页会话数（上游限制 2–100）。 |
+| `sessionContextMode` | `transcript` | `transcript` / `tools` / `file`：装载的会话怎么进提示词。 |
+| `maxSessionBytes` | `400000` | 内联两档的每会话字节预算。 |
 | `attachmentRetentionDays` | `7` | 本面板插入的 `answer-*.md` 保留天数；`0` 关闭清理。 |
 | `attachmentPruneReferenced` | `false` | 连被会话引用的附件也按年龄清理。 |
 | `wasmPath` | `assets/sha3_wasm_bg.wasm` | 工作量证明模块。 |
@@ -209,23 +211,39 @@ DSH 的会话日志本身**不带标题**——侧栏显示的标题存在会话
 
 ### 到底附了哪些内容
 
-会话比上限长时，行上显示 `40 / 97 条`：前一个数是**真正进提示词**的条数，后一个数是会话里的总条数。
+装载的会话有**三档保真度**，在选择器里选（`正文 / 含工具 / 文件附件`），并记在 chip 上：
+
+| 档位 | 发出去的内容 | 一条真实会话（12 783 事件）实测 |
+|---|---|---|
+| `transcript`（默认） | 用户与助手正文，压缩检查点保留；工具流量与思考丢弃 —— 与 DSH 自己的会话投影一致 | 183 KB ≈ 8.5 万 token |
+| `tools` | 上述内容 + 每个工具调用一行 + 最近 12 轮的工具结果（每条截断 400 字） | 上游回报 65 471 token |
+| `file` | 完整 `full` 渲染（每个调用、结果截断 4 000 字）经网页 API 的文件接口上传，再用 `ref_file_ids` 引用，模型自己读 | 上游回报 210 073 token |
+
+会话比上限长时，行上显示 `40 / 99 条`：前一个数是**真正进提示词**的条数，后一个数是会话里的总条数。
 完整规则按顺序是：
 
 1. **读取窗口**：先读最后 240 个原始事件；如果折叠后不足 48 条，窗口依次放大到 1200、4000，最后读整份日志。
    这很关键——一个 agentic 回合就可能产生数百个事件，固定 240 事件曾经让 97 条的会话只附上 3 条。
-2. **哪些事件算数**：只有 `user/message` 和 `assistant/message`。思考（reasoning）块丢弃（那是模型的草稿），
-   工具**结果**丢弃，工具**调用**只计数。
-3. **折叠**：连续的多条助手事件（同一回合的多个 step）合并成**一个** `助手:` 条目，正文用换行连接，
-   末尾追加一行统计：`（本回合使用了 3 次工具：pwsh×2, read）`。
-4. **丢弃空条目**：没有正文的用户消息、正文与统计都为空的条目不占位置。
+2. **哪些事件算数**：正文档只有 `user/message` 与 `assistant/message`；两个富档另有 `tool/result`。
+   思考（reasoning）块一律丢弃（那是模型草稿），正文档连工具结果也不带，工具调用只计数。
+3. **折叠**：连续的多条助手事件（同一回合的多个 step）合并成**一个** `助手:` 条目，正文用换行连接。
+4. **丢弃空条目**：没有正文的用户消息、正文与动作细节都为空的条目不占位置。
 5. **截断**：单条超过 4000 字符会截断并标注 `…（已截断）`，不会静默丢字。
 6. **上限**：保留**最新 40 个条目**（`MAX_TURNS`），按时间从旧到新。单位是条目，不是原始消息：
    一个条目 = 一次用户提问，或一个折叠后的回合。
-7. **包装**：条目之间空一行，整体包成 `<conversation title="…">…</conversation>`，
-   再受 `maxContextBytes`（400 000）总预算约束，超出会带显式截断标记。
+7. **预算**：`maxSessionBytes`（默认 400 000）按会话算：先丢最旧的非检查点条目，再截断最长一条并标注；
+   块上的 `entries` / `rendered` / `bytes` / `omitted` / `omittedBytes` 就是这次到底发了多少。
+8. **包装**：条目之间空一行，整体包成 `<conversation id="…" title="…" mode="…">…</conversation>`，
+   再受 `maxContextBytes` 总预算约束，超出会带显式截断标记。
 
-所以「40 条」= 最多 40 个**条目**，是会话的尾部，不一定是全部。
+`file` 档下这个块会变成"开头摘要 + 一句说明全文已作为文件附上"，上传按「会话 + 渲染大小」记忆；
+上传失败会自动退回内联的 `tools` 渲染，并在 summary 里标 `uploadFallback`。
+
+宿主会把实际发送的内容以 `context` 事件回报，所以 chip 的提示会在第一次请求后变成
+`含工具 · 214 KB`（或 `正文 · 183 KB`、`文件附件 · 26 MB`）。
+
+> 只要 chip 还在，上下文就**每轮都会重发**；`file` 档因此是每条约 20 万 token 的成本，
+> 要在"保真"和"花费"之间自己权衡时再选它。
 
 ## 插入 DSH
 
@@ -333,6 +351,7 @@ node scripts/route-smoke.mjs           # 用假 ctx 跑 HTTP 面
 node scripts/wasm-fallback-check.mjs   # 没有 assets 的安装：下载一次、之后复用
 node scripts/panel-refs-check.mjs      # panel script reads only declared fields
 node scripts/dsh-sessions-check.mjs    # 会话选择器：标题、预览、空会话隐藏
+node scripts/session-render-check.mjs      # 三档保真度渲染（正文 / 含工具 / 完整）
 node scripts/composer-bridge-check.mjs # composer insertion tiers (fake DOM)
 node scripts/ui-copy-check.mjs             # 两语言键一致、无残留字面量
 node scripts/attachment-gc-check.mjs       # 清理策略：会话引用的保留、我们插入的按期限删

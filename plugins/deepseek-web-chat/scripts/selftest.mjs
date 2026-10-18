@@ -176,13 +176,20 @@ await check('a dropped DSH session becomes a conversation block', async () => {
       };
     },
   };
-  const config = { maxContextBytes: 100_000, maxFileBytes: 100_000, workspaceRoot: wasmPath };
+  const config = { maxContextBytes: 100_000, maxFileBytes: 100_000, maxSessionBytes: 100_000, workspaceRoot: wasmPath };
   const context = await buildContext({ sessions: [sessionId] }, config, { persistence });
-  assert.match(context.preamble, /<conversation title="DSH 会话 · 把这个仓库重构一下">/);
+  assert.match(context.preamble, /<conversation [^>]*title="DSH 会话 · 把这个仓库重构一下"/u);
   assert.match(context.preamble, /用户: 把这个仓库重构一下/);
   assert.match(context.preamble, /助手: 好的，先看目录结构。/);
-  assert.match(context.preamble, /本回合使用了 1 次工具：bash/);
-  assert.equal(context.summary[0].source, 'session');
+  // The default level is prose only, matching DSH's own session projection.
+  assert.equal(context.preamble.includes('→ bash'), false);
+  assert.match(context.preamble, /mode="transcript"/u);
+  assert.equal(context.summary[0].mode, 'transcript');
+
+  const rich = await buildContext({ sessions: [{ id: sessionId, mode: 'tools' }] }, config, { persistence });
+  assert.match(rich.preamble, /→ bash/u);
+  assert.match(rich.preamble, /mode="tools"/u);
+  assert.equal(rich.summary[0].mode, 'tools');
 
   const preview = await readSessionTranscript(sessionId, { persistence });
   assert.equal(preview.lines.length, 2);

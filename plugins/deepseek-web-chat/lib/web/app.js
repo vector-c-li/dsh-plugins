@@ -42,6 +42,10 @@ const state = {
   streaming: false,
   pickerPath: '',
   pickerSelection: new Set(),
+  /** Fidelity used when a DSH conversation is loaded: transcript | tools | file. */
+  sessionMode: 'transcript',
+  /** Context summary reported by the host for the last request. */
+  lastContext: null,
   lang: initialLang(),
   /** Multi-select mode over finished answers; `selected` holds message indexes. */
   selecting: false,
@@ -1011,7 +1015,9 @@ async function send() {
         search: state.search,
         paths: state.context.filter((item) => item.kind === 'file').map((item) => item.path),
         inline: state.context.filter((item) => item.kind === 'drop').map((item) => ({ name: item.name, text: item.text })),
-        sessions: state.context.filter((item) => item.kind === 'session').map((item) => item.id),
+        sessions: state.context
+          .filter((item) => item.kind === 'session')
+          .map((item) => ({ id: item.id, mode: item.mode ?? 'transcript' })),
       }),
       signal: controller.signal,
     });
@@ -1023,6 +1029,9 @@ async function send() {
       if (event.type === 'ready') {
         state.sessionId = event.sessionId ?? state.sessionId;
         assistant.pending = true;
+      } else if (event.type === 'context') {
+        state.lastContext = event.summary ?? null;
+        applyContextSummary(state.lastContext);
       } else if (event.type === 'text') {
         assistant.text += event.text;
         assistant.pending = false;
@@ -1137,8 +1146,65 @@ function closeModal() {
  * how the conversation opened and last answered — plus an expandable excerpt, so
  * the user can see what will be attached before attaching it.
  */
+/** The label shown for one fidelity mode. */
+function modeLabel(mode) {
+  if (mode === 'tools') return ui('modeTools');
+  if (mode === 'file') return ui('modeFile');
+  return ui('modeTranscript');
+}
+
+/** Three-way selector for how a loaded conversation reaches the prompt. */
+function renderModeBar() {
+  const bar = h('div', { class: 'mode-bar', role: 'group', 'aria-label': ui('modeLabel') });
+  const buttons = new Map();
+  const paint = () => {
+    for (const [mode, button] of buttons) button.setAttribute('aria-pressed', String(state.sessionMode === mode));
+  };
+  for (const [mode, label, hint] of [
+    ['transcript', ui('modeTranscript'), ui('modeTranscriptHint')],
+    ['tools', ui('modeTools'), ui('modeToolsHint')],
+    ['file', ui('modeFile'), ui('modeFileHint')],
+  ]) {
+    const button = h('button', {
+      class: 'ghost',
+      type: 'button',
+      text: label,
+      title: hint,
+      onclick: () => {
+        state.sessionMode = mode;
+        paint();
+      },
+    });
+    buttons.set(mode, button);
+    bar.append(button);
+  }
+  paint();
+  return bar;
+}
+
+/**
+ * Replace the session chips' hint with what the host actually sent.
+ * @param {Array<{source: string, label: string, bytes: number, mode?: string, omitted?: number, bytesTotal?: number, uploadFallback?: boolean}>|null} summary
+ */
+function applyContextSummary(summary) {
+  if (!Array.isArray(summary)) return;
+  const sessions = summary.filter((item) => item.source === 'session');
+  if (sessions.length === 0) return;
+  const chips = state.context.filter((item) => item.kind === 'session');
+  sessions.forEach((report, index) => {
+    const chip = chips[index];
+    if (chip === undefined) return;
+    const kb = report.mode === 'file' ? Math.round((report.bytesTotal ?? 0) / 1024) : Math.round((report.bytes ?? 0) / 1024);
+    const parts = [modeLabel(report.mode ?? chip.mode), `${Math.max(1, kb)} KB`];
+    if (report.omitted > 0) parts.push(`-${report.omitted}`);
+    chip.hint = parts.join(' · ');
+  });
+  renderChips();
+}
+
 async function openSessionPicker() {
   const status = h('div', { class: 'status-line', text: ui('readingSessions') });
+  const modeBar = renderModeBar();
   const search = h('input', {
     class: 'session-search',
     type: 'search',
@@ -1147,7 +1213,7 @@ async function openSessionPicker() {
   });
   const list = h('div', { class: 'sessions' });
   const hint = h('div', { class: 'status-line' });
-  const body = h('div', { class: 'session-picker' }, search, list, hint);
+  const body = h('div', { class: 'session-picker' }, modeBar, search, list, hint);
   openModal({
     title: ui('dshSessionsTitle'),
     body: [status, body],
@@ -1197,8 +1263,9 @@ async function openSessionPicker() {
         addContext({
           kind: 'session',
           id: session.id,
+          mode: state.sessionMode,
           label: session.title || ui('sessionLabel', { id: session.id.slice(0, 8) }),
-          hint: `${session.title ?? session.id} · ${ui('messagesCount', { n: session.messages ?? 0 })}`,
+          hint: `${modeLabel(state.sessionMode)} · ${ui('messagesCount', { n: session.messages ?? 0 })}`,
         });
         toast(ui('transcriptNotice'));
         closeModal();

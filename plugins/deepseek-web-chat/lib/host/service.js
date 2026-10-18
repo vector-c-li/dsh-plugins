@@ -12,21 +12,23 @@ import { randomUUID } from 'node:crypto';
 const REV = new URL(import.meta.url).searchParams.get('rev') ?? '';
 const load = (specifier) => import(new URL(`${specifier}${REV ? `?rev=${REV}` : ''}`, import.meta.url).href);
 
-const [{ createPowSolver }, { DeepSeekWebApi, WebApiError, CODE }, workspace, wasm, dshSessionsModule] = await Promise.all([
+const [{ createPowSolver }, { DeepSeekWebApi, WebApiError, CODE }, workspace, wasm, dshSessionsModule, renderModule] = await Promise.all([
   load('./pow.js'),
   load('./api.js'),
   load('./workspace.js'),
   load('./wasm.js'),
   load('./dsh-sessions.js'),
+  load('./session-render.js'),
 ]);
 const { readWorkspaceFile, listWorkspaceDirectory, resolveWorkspaceRoot } = workspace;
 const { readCachedTitle, pickerRow, visibleRows, foldTranscript, MAX_TURNS } = dshSessionsModule;
+const { renderSession, SESSION_MODES } = renderModule;
 
 /** Credential record key; the scope names this plugin, the id names the account. */
 const RECORD_KEY = 'deepseek-web-chat/account';
 
 /** Build tag shown in the panel; bump it whenever the panel document changes. */
-const PANEL_VERSION = '0.6.3';
+const PANEL_VERSION = '0.7.0';
 
 /** A DSH session id: `session-<uuid>`, tolerating a bare uuid. */
 const SESSION_ID = /^(?:session-)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
@@ -417,15 +419,24 @@ export function createService({ ctx, config, logger }) {
       const { api, record } = await boundApi();
 
       let sessionId = typeof request.sessionId === 'string' && request.sessionId.length > 0 ? request.sessionId : null;
+      const sources = normalizeSessionSources(request.sessions, config.sessionContextMode);
+      const deps = { persistence: ctx.get('sessionPersistence'), background: ctx.get('sessionQuery'), logger, home: config.dshHome };
+      // File-mode sources are uploaded first: the model then owns the whole
+      // transcript instead of receiving whichever slice fitted in the prompt.
+      const preparedFiles = await prepareUploadedSessions(sources, { api, token: record.token, deps, signal });
       const context = await buildContext(
         {
           paths: request.paths ?? [],
           inline: request.inline ?? [],
-          sessions: request.sessions ?? [],
+          sessions: sources,
         },
         { ...config, workspaceRoot: defaultRoot() },
-        { persistence: ctx.get('sessionPersistence'), background: ctx.get('sessionQuery'), logger },
+        { ...deps, preparedFiles: preparedFiles.byId },
       );
+      const refFileIds = preparedFiles.fileIds;
+      // Tell the panel what actually went out: bytes, mode and omissions per
+      // source, so a chip can show "tools ? 214 KB ? -12" instead of guessing.
+      if (context.summary.length > 0) yield { type: 'context', summary: context.summary };
       if (sessionId === null) {
         const created = await api.createSession(record.token, signal);
         sessionId = created.id;
@@ -456,7 +467,7 @@ export function createService({ ctx, config, logger }) {
           prompt: finalPrompt,
           thinking: Boolean(request.thinking ?? config.defaultThinking),
           search: Boolean(request.search ?? config.defaultSearch),
-          refFileIds: [],
+          refFileIds,
         },
         { signal },
       )) {
@@ -545,7 +556,7 @@ function samePath(a, b) {
 export async function buildContext(sources, config, deps = {}) {
   const paths = Array.isArray(sources?.paths) ? sources.paths.filter((item) => typeof item === 'string' && item.length > 0) : [];
   const inline = Array.isArray(sources?.inline) ? sources.inline : [];
-  const sessions = Array.isArray(sources?.sessions) ? sources.sessions.filter((item) => typeof item === 'string' && item.length > 0) : [];
+  const sessions = normalizeSessionSources(sources?.sessions);
   const blocks = [];
   const summary = [];
   let used = 0;
@@ -591,26 +602,62 @@ export async function buildContext(sources, config, deps = {}) {
     blocks.push(`<file path="${name}">\n${clipped.text}\n</file>`);
   }
 
-  for (const id of sessions) {
+  for (const source of sessions) {
     if (used >= config.maxContextBytes) {
-      summary.push({ source: 'session', label: id, bytes: 0, truncated: true });
+      summary.push({ source: 'session', label: source.id, bytes: 0, truncated: true });
       continue;
     }
-    const budget = Math.min(config.maxContextBytes - used, config.maxContextBytes);
+    const budget = config.maxContextBytes - used;
     try {
-      const transcript = await readSessionTranscript(id, deps);
-      const text = transcript.lines.join('\n\n');
-      const clipped = clip(text, budget);
-      used += clipped.bytes;
-      summary.push({ source: 'session', label: transcript.title, bytes: clipped.bytes, truncated: clipped.truncated });
+      // File mode is uploaded separately (see `prepareSessionFile`) so the model
+      // reads the whole transcript itself instead of receiving a clipped inline
+      // copy; inline it here only as the fallback when that upload failed.
+      const prepared = source.mode === 'file' ? deps.preparedFiles?.get(source.id) : undefined;
+      const rendered = await renderSessionSource(source, {
+        mode: source.mode === 'file' ? 'full' : source.mode,
+        maxBytes: Math.min(budget, config.maxSessionBytes ?? budget),
+        deps,
+      });
+      if (source.mode === 'file' && prepared !== undefined) {
+        summary.push({
+          source: 'session',
+          label: rendered.title,
+          bytes: 0,
+          truncated: false,
+          mode: 'file',
+          fileId: prepared.fileId,
+          entries: rendered.entries,
+          bytesTotal: prepared.bytesTotal,
+        });
+        blocks.push(
+          `<conversation id="${source.id}" title="${escapeAttribute(rendered.title)}" mode="file" entries="${rendered.entries}" bytes="${prepared.bytesTotal}">\n` +
+            `（全文已作为文件 ${prepared.fileName} 附在本对话中，请按需阅读；下面是开头摘要。）\n${prepared.head}\n</conversation>`,
+        );
+        continue;
+      }
+      used += rendered.bytes;
+      summary.push({
+        source: 'session',
+        label: rendered.title,
+        bytes: rendered.bytes,
+        truncated: rendered.truncated,
+        mode: rendered.mode,
+        entries: rendered.entries,
+        omitted: rendered.omitted,
+        omittedBytes: rendered.omittedBytes,
+        ...(source.mode === 'file' ? { uploadFallback: true } : {}),
+      });
       blocks.push(
-        `<conversation title="${escapeAttribute(transcript.title)}">\n${clipped.text}\n</conversation>`,
+        `<conversation id="${source.id}" title="${escapeAttribute(rendered.title)}" mode="${rendered.mode}" entries="${rendered.entries}" rendered="${rendered.rendered}" bytes="${rendered.bytes}"${rendered.truncated ? ` omitted="${rendered.omitted}" omittedBytes="${rendered.omittedBytes}"` : ''}>\n` +
+          `${rendered.text}\n` +
+          `${rendered.truncated ? `（本会话共 ${rendered.entries} 条，已省略 ${rendered.omitted} 条最旧内容 / 约 ${rendered.omittedBytes} 字节，其余为截断标记。）\n` : ''}` +
+          '</conversation>',
       );
     } catch (error) {
       const message = String(error?.message ?? error);
-      deps.logger?.warn?.(`reading DSH session ${id} failed: ${message}`);
-      summary.push({ source: 'session', label: id, bytes: 0, truncated: false, error: message });
-      blocks.push(`<conversation id="${id}">(读取失败: ${message})</conversation>`);
+      deps.logger?.warn?.(`reading DSH session ${source.id} failed: ${message}`);
+      summary.push({ source: 'session', label: source.id, bytes: 0, truncated: false, error: message });
+      blocks.push(`<conversation id="${source.id}">(读取失败: ${message})</conversation>`);
     }
   }
 
@@ -628,6 +675,147 @@ export async function buildContext(sources, config, deps = {}) {
 function escapeAttribute(value) {
   return String(value).replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
+
+/**
+ * Accept both wire shapes: `["session-id"]` (older panels) and
+ * `[{id, mode}]`. Unknown modes fall back to the configured default.
+ * @param {unknown} value
+ * @param {string} [fallbackMode]
+ * @returns {Array<{id: string, mode: 'transcript'|'tools'|'file'}>}
+ */
+export function normalizeSessionSources(value, fallbackMode = 'transcript') {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const item of value) {
+    if (typeof item === 'string' && item.length > 0) {
+      out.push({ id: item, mode: SESSION_MODES.includes(fallbackMode) || fallbackMode === 'file' ? fallbackMode : 'transcript' });
+      continue;
+    }
+    if (item !== null && typeof item === 'object' && typeof item.id === 'string' && item.id.length > 0) {
+      const mode = item.mode === 'file' || SESSION_MODES.includes(item.mode) ? item.mode : 'transcript';
+      out.push({ id: item.id, mode });
+    }
+  }
+  return out;
+}
+
+/**
+ * Read one session's event corpus, preferring the query service.
+ *
+ * `sessionQuery.readSession` is live-preferred (it includes events a running
+ * session has not flushed yet) and validates the log; persistence is the fallback,
+ * and both return the same event shape.
+ * @param {string} sessionId
+ * @param {{persistence?: object, background?: object}} deps
+ * @returns {Promise<Array<{type?: string, data?: object}>>}
+ */
+export async function readSessionEvents(sessionId, deps = {}) {
+  const query = deps.background;
+  if (query !== undefined && typeof query.readSession === 'function') {
+    const corpus = await query.readSession(sessionId);
+    const events = Array.isArray(corpus?.events) ? corpus.events : [];
+    if (events.length > 0) return events;
+  }
+  const persistence = deps.persistence;
+  if (persistence === undefined || typeof persistence.open !== 'function') {
+    throw new Error('会话存储服务不可用');
+  }
+  const handle = await persistence.open(sessionId, 'read');
+  try {
+    const result = await handle.read();
+    return Array.isArray(result?.events) ? result.events : [];
+  } finally {
+    await handle.close?.();
+  }
+}
+
+/**
+ * Render one session source at the requested fidelity level.
+ * @param {{id: string, mode: string}} source
+ * @param {{mode?: string, maxBytes?: number, deps?: object}} options
+ */
+export async function renderSessionSource(source, options = {}) {
+  const deps = options.deps ?? {};
+  const events = await readSessionEvents(source.id, deps);
+  const cached = await readCachedTitle({ home: deps.home ?? '', id: source.id });
+  const rendered = renderSession(events, {
+    mode: options.mode ?? source.mode,
+    maxBytes: options.maxBytes,
+  });
+  // Title chain: the title DSH generated, else the opening ask, else the id.
+  const firstAsk = rendered.text.split('\n\n').find((line) => line.startsWith('用户: '));
+  const derived = firstAsk === undefined ? '' : firstAsk.slice(4).replace(/\s+/gu, ' ').trim().slice(0, 32);
+  return {
+    ...rendered,
+    title: cached.title ?? (derived.length > 0 ? `DSH 会话 · ${derived}` : `DSH 会话 · ${source.id.slice(0, 8)}`),
+  };
+}
+
+/**
+ * Render one session for upload as a file, and give a short head to inline.
+ * @param {string} sessionId
+ * @param {{deps?: object, headBytes?: number}} [options]
+ */
+export async function renderSessionFile(sessionId, options = {}) {
+  const deps = options.deps ?? {};
+  const events = await readSessionEvents(sessionId, deps);
+  const cached = await readCachedTitle({ home: deps.home ?? '', id: sessionId });
+  // The file gets everything: no budget, no per-turn tool trimming.
+  const full = renderSession(events, { mode: 'full', maxBytes: Number.MAX_SAFE_INTEGER, recentToolTurns: Number.MAX_SAFE_INTEGER });
+  const headBytes = options.headBytes ?? 4000;
+  const head = Buffer.from(full.text, 'utf8').subarray(0, headBytes).toString('utf8');
+  return {
+    title: cached.title ?? `DSH 会话 · ${sessionId.slice(0, 8)}`,
+    text: full.text,
+    entries: full.entries,
+    bytesTotal: full.bytes,
+    head,
+    fileName: `dsh-session-${sessionId.replace(/^session-/u, '').slice(0, 8)}.md`,
+  };
+}
+
+/**
+ * Upload every file-mode source, reusing one upload per identical rendering.
+ *
+ * The web chat accepts a file reference id (`ref_file_ids`) that it keeps for the
+ * conversation; uploading the same bytes again would only cost time, so the id is
+ * memoised by session id plus rendered size.
+ * @param {Array<{id: string, mode: string}>} sources
+ * @param {{api: object, token: string, deps: object, signal?: AbortSignal}} options
+ * @returns {Promise<{byId: Map<string, {fileId: string, fileName: string, bytesTotal: number, head: string}>, fileIds: string[]}>}
+ */
+async function prepareUploadedSessions(sources, { api, token, deps, signal }) {
+  const byId = new Map();
+  const fileIds = [];
+  for (const source of sources) {
+    if (source.mode !== 'file') continue;
+    const rendered = await renderSessionFile(source.id, { deps });
+    const key = `${source.id}:${rendered.bytesTotal}`;
+    let uploaded = uploadCache.get(key);
+    if (uploaded === undefined) {
+      try {
+        const result = await api.uploadFile(
+          token,
+          { bytes: new TextEncoder().encode(rendered.text), filename: rendered.fileName, mimeType: 'text/markdown' },
+          signal,
+        );
+        uploaded = { fileId: result.id, fileName: rendered.fileName };
+        uploadCache.set(key, uploaded);
+      } catch (error) {
+        // Degrade to the inline rendering (`buildContext` notices the missing
+        // entry in `preparedFiles` and emits the tail instead of nothing).
+        deps.logger?.warn?.(`uploading session ${source.id} failed, inlining instead: ${String(error?.message ?? error)}`);
+        continue;
+      }
+    }
+    byId.set(source.id, { fileId: uploaded.fileId, fileName: uploaded.fileName, bytesTotal: rendered.bytesTotal, head: rendered.head });
+    fileIds.push(uploaded.fileId);
+  }
+  return { byId, fileIds };
+}
+
+/** session id + rendered size → uploaded file id, for the life of this process. */
+const uploadCache = new Map();
 
 /**
  * Read one DSH session's transcript through the persistence service.

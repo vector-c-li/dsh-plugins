@@ -677,6 +677,13 @@ ol.sources a:hover { text-decoration: underline; }
 
 /* ---------- DSH session picker ---------- */
 .session-picker { display: flex; flex-direction: column; gap: 8px; }
+.mode-bar { display: flex; gap: 4px; }
+.mode-bar button { font-size: 11px; padding: 3px 9px; }
+.mode-bar button[aria-pressed="true"] {
+  border-color: var(--dsw-accent);
+  color: var(--dsw-accent);
+  background: var(--dsw-accent-weak);
+}
 .session-search {
   width: 100%;
   box-sizing: border-box;
