@@ -133,7 +133,7 @@ over from before, plus the installed bundle. Disable one of them in **Plugins**,
 - installed from git? keep the bundle and disable the `file://` row (or delete that row from
   `$DSH_HOME/profiles/desktop/cordis.patch.yml`).
 
-`v0.5.6` and later log a readable warning for this case instead of failing activation.
+`v0.6.0` and later log a readable warning for this case instead of failing activation.
 
 **`连接 GitHub 超时` / `无法访问 GitHub` while installing**
 The Host reaches GitHub through git, so a blocked direct route fails the install even when a browser
@@ -167,12 +167,18 @@ enable the plugin, then refresh.
 
 ## Insert into DSH
 
-Each finished answer carries two actions: **Copy** and **Insert into DSH**.
+Each finished answer carries four actions: **Copy**, **Insert into DSH**, **Insert as file** and
+**Select**.
 
 **Insert into DSH** writes the answer — plain-text Markdown, code fences intact — into the DSH
 composer at the caret, then puts the caret after it. If the composer already holds text, a blank line
 is inserted first so the two never glue together. The message is **not** sent: review and edit it
 yourself. A prompt-injected answer therefore cannot trigger a tool call on its own.
+
+**Insert as file** puts `answer-<message id>.md` into the composer as a real attachment chip, using the
+composer's own file intake (a synthetic `paste` carrying a `File`): DSH uploads the bytes through its
+official route and renders the chip. If this DSH build does not turn that paste into a chip, the answer
+is inserted as text instead and the toast says so — the click never ends in nothing.
 
 The panel is a same-origin iframe, so `lib/web/composer-bridge.js` reaches the Host composer through
 `window.parent` and degrades in this order, logging `composer bridge: …` at every miss:
@@ -184,6 +190,10 @@ The panel is a same-origin iframe, so `lib/web/composer-bridge.js` reaches the H
 | 3 | `execCommand('insertText')` / textarea setter | If the paste event is ignored, or the composer is a plain `<textarea>` |
 | 4 | clipboard | If no composer is found or every DOM layer fails: the text is copied and a toast says so |
 
+Attachment insertion is a separate entry point (`insertAsAttachment`) that rides the composer's
+`PASTE_COMMAND`: it reads `clipboardData.items` of kind `file` and hands them to `intakeFiles`, which is
+why a JS-built `File` (no host path) takes the upload branch and becomes a chip.
+
 There is deliberately no service/store layer: DSH exposes no draft-insertion API to plugins, and the
 draft store is a per-session factory (`slots.register({ name: 'conversation.session', store })`) whose
 `create(scope)` returns a fresh instance, so writing through it would not re-render the composer.
@@ -191,6 +201,34 @@ draft store is a per-session factory (`slots.register({ name: 'conversation.sess
 The composer selector lives in one constant (`COMPOSER_SELECTORS` in `composer-bridge.js`):
 `[data-composer-input]` first, then `[role="textbox"][contenteditable="true"]`, then any visible
 editable. DSH's own class names are CSS-module hashes and are never used.
+
+### What an attached file means to the model, and where it lives
+
+A **generic file** attachment is not inlined into the prompt. DSH projects it as a *text handle naming
+its identity and a read-only process path* (`@deepseek-ai/dsh-attachment-local` → "Model Experience"), so
+the model reads it with the read tool exactly as it would read an `@path` mention. Images are different:
+they are normalized and sent as request bytes. In practice: **Insert into DSH** guarantees the text is
+in the prompt; **Insert as file** guarantees a chip and a readable file, at the cost of a read call.
+
+Storage, honestly:
+
+- the bytes go to **DSH's own content-addressed attachment store** (`$DSH_HOME/attachments/v1/`), which
+  dedupes identical bytes (inserting the same answer twice stores nothing new);
+- DSH **never prunes** that store — upstream documents attachment retention/GC as deferred — so chips do
+  grow it over time. This plugin writes **no file of its own**, so there is nothing of ours to sweep;
+- if you want to reclaim space, delete old objects under `$DSH_HOME/attachments/v1/file-objects` and
+  `…/files` yourself; sessions that already consumed them keep their transcripts, only re-reading an old
+  attachment would fail. The text button stores nothing at all.
+
+## Interface language
+
+The whole panel is bilingual: the `EN` / `中文` button in the top bar flips every label — top bar,
+composer, context chips, message roles, section summaries, dialogs, toasts and the sign-in page. The
+choice is remembered in `localStorage` (`dsw-chat-lang`) and the sign-in gate follows the same setting.
+
+All strings live in `lib/web/gate-copy.js` (`UI_COPY`, `PANEL_COPY`, `GATE_COPY`); `scripts/ui-copy-check.mjs`
+fails the build if the two languages drift apart, if a lookup names a missing key, or if a Chinese
+literal sneaks back into the panel script.
 
 ## Batch insert
 
@@ -258,6 +296,7 @@ node scripts/wasm-fallback-check.mjs   # install without assets: download + reus
 node scripts/panel-refs-check.mjs      # panel script reads only declared fields
 node scripts/composer-bridge-check.mjs # composer insertion tiers (fake DOM)
 node scripts/batch-insert-check.mjs        # multi-select ordering, separators, limits
+node scripts/ui-copy-check.mjs             # both languages agree, no stray literals
 node scripts/live-check.mjs            # against a running DSH (mints a browser cookie)
 node scripts/live-chat.mjs --dsh-session <id>   # real answer, prints text + citations
 node scripts/preview.mjs               # static preview server for the panel UI

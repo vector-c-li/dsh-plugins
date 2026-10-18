@@ -19,7 +19,8 @@
 | **工作区上下文** | 从工作区挑文件（或拖进来）作为提示词的一部分。 |
 | **DSH 会话上下文** | 拖一条侧边栏会话进来（或用 `会话` 按钮）；Host 读转录并折进提示词。 |
 | **历史会话** | 浏览并继续网页版已有的对话。 |
-| **插入 DSH** | 每条完成的回答下有 **复制** 与 **插入 DSH**：纯文本 markdown 写进 DSH 输入框的光标处，由你自己编辑发送。**绝不自动发送**。 |
+| **插入 DSH** | 每条完成的回答下有 **复制 / 插入 DSH / 插入为附件 / 多选**：文本写进输入框光标处，附件则变成 chip。由你自己编辑发送，**绝不自动发送**。 |
+| **中英双语界面** | 顶栏 `EN / 中文` 切换整个面板与登录页的文案，选择会记住。 |
 | **中英双语登录页** | 登录前整屏只有登录页，带四步图文指引，可切换中/英。 |
 
 ## 环境要求
@@ -130,7 +131,7 @@ ln -s ~/dsh-plugins/plugins/deepseek-web-chat ~/.dsh/profiles/desktop/node_modul
 - 从检出目录开发：保留 `file://` 那行，把组合包卸掉；
 - 从 git 安装：保留组合包，停用（或从 `$DSH_HOME/profiles/desktop/cordis.patch.yml` 删掉）`file://` 那行。
 
-`v0.5.6` 起，这种情况会打印一条可读的警告，而不是让整行启用失败。
+`v0.6.0` 起，这种情况会打印一条可读的警告，而不是让整行启用失败。
 
 **安装时报 `连接 GitHub 超时` / `无法访问 GitHub`**
 Host 是通过 **git** 去取 GitHub 的，所以浏览器能开、直连被墙时安装仍会超时。两条出路：
@@ -191,11 +192,15 @@ git 安装是快照：再粘一次 spec（或 `dsh plugin --profile desktop add 
 
 ## 插入 DSH
 
-每条完成的回答底部有两个动作：**复制** 和 **插入 DSH**。
+每条完成的回答底部有四个动作：**复制**、**插入 DSH**、**插入为附件**、**多选**。
 
 「插入 DSH」把回答（纯文本 markdown，代码围栏原样保留）写进 DSH 输入框的**光标处**，
 写完把光标留在末尾；如果输入框已有内容，会先补一个空行，避免和草稿粘在一起。
 **不会自动发送** —— 由你自己过目、编辑、发送，所以回答里即使混进注入指令也无法自行触发工具。
+
+「插入为附件」把 `answer-<消息 id>.md` 作为**真附件 chip** 放进输入框：它借用输入框自己的文件入口
+（合成一个带 `File` 的 `paste`），DSH 用官方上传链路存字节并渲染 chip。若当前 DSH 构建没能把它变成
+chip，会自动改为插入文本，并在 toast 里说明 —— 这一下点击不会白点。
 
 面板与主界面同源，`lib/web/composer-bridge.js` 通过 `window.parent` 直接触达主输入框，
 按下列顺序降级，每一级失败都会打印 `composer bridge: …` 说明原因：
@@ -206,6 +211,33 @@ git 安装是快照：再粘一次 spec（或 `dsh plugin --profile desktop add 
 | 2 | 合成 `paste` 事件 | **常规路径**：输入框是 Lexical，这等价于 Ctrl+V，官方粘贴链路 |
 | 3 | `execCommand('insertText')` / textarea setter | paste 被忽略时；或输入框是普通 `<textarea>` 时 |
 | 4 | 剪贴板 | 找不到输入框、或所有 DOM 层都失败时：复制并弹提示让用户手动粘贴 |
+
+附件是独立入口 `insertAsAttachment`，走输入框的 `PASTE_COMMAND`：它读 `clipboardData.items` 里
+`kind: 'file'` 的项交给 `intakeFiles`。JS 构造的 `File` 没有宿主路径，正好落到上传分支，于是变成 chip。
+
+### 附件在模型侧是什么，以及它落在哪里
+
+**普通文件附件不会把正文内联进提示词**。DSH 把它投影成"带身份与只读路径的文本 handle"
+（`@deepseek-ai/dsh-attachment-local` 的 Model Experience 一节），模型需要用 read 工具去读 ——
+与 `@路径` 的体验一致；图片不同，会被规范化为请求字节发送。所以实际差别是：
+**插入 DSH** 保证正文在提示词里；**插入为附件** 保证一个 chip + 一个可读文件，代价是一次 read 调用。
+
+磁盘占用，如实说明：
+
+- 字节进入 **DSH 自己的内容寻址附件库**（`$DSH_HOME/attachments/v1/`），相同内容只存一份
+  （同一回答反复插入不会重复占空间）；
+- DSH **不会自动清理**这个库（上游把 attachment 的保留/GC 列为 deferred），所以 chip 用久了确实会变大。
+  **本插件自己不写任何文件**，因此没有"我们的目录"需要定时清；
+- 想回收空间就自己删 `$DSH_HOME/attachments/v1/file-objects` 与 `…/files` 下的旧对象；已经消费过它的
+  会话转录不受影响，只有"重新读取旧附件"会失败。用文本按钮则完全不占空间。
+
+## 界面中英文切换
+
+整个面板是双语的：顶栏的 `EN` / `中文` 按钮会切换所有文案 —— 顶栏、输入区、上下文 chip、消息角色、
+折叠区标题、对话框、toast，以及登录页。选择记在 `localStorage`（`dsw-chat-lang`），登录页跟随同一设置。
+
+所有文案集中在 `lib/web/gate-copy.js`（`UI_COPY`、`PANEL_COPY`、`GATE_COPY`）；
+`scripts/ui-copy-check.mjs` 会在两边键不一致、某个 lookup 指向不存在的键、或面板脚本里又出现中文字面量时失败。
 
 **没有服务/store 层**，这是刻意的：DSH 没有对插件开放草稿写入接口，草稿 store 是按会话
 scope 的工厂（`slots.register({ name: 'conversation.session', store })`），`create(scope)`
@@ -246,6 +278,7 @@ node scripts/route-smoke.mjs           # 用假 ctx 跑 HTTP 面
 node scripts/wasm-fallback-check.mjs   # 没有 assets 的安装：下载一次、之后复用
 node scripts/panel-refs-check.mjs      # panel script reads only declared fields
 node scripts/composer-bridge-check.mjs # composer insertion tiers (fake DOM)
+node scripts/ui-copy-check.mjs             # 两语言键一致、无残留字面量
 node scripts/batch-insert-check.mjs        # multi-select ordering, separators, limits
 node scripts/live-check.mjs            # 对着运行中的 DSH（自签浏览器 cookie）
 node scripts/live-chat.mjs --dsh-session <id>   # 真实提问，打印答案与引用

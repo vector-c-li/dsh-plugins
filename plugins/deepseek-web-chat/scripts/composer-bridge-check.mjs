@@ -10,7 +10,10 @@
  */
 import assert from 'node:assert/strict';
 import {
+  attachmentName,
   buildPayload,
+  findAttachmentChip,
+  insertAsAttachment,
   insertIntoComposer,
   pickComposer,
   withSourceMarker,
@@ -33,8 +36,8 @@ async function check(name, fn) {
  * @param {'none'|'supported'} [options.execCommand] Whether insertText works.
  * @param {{writeText: (text: string) => Promise<void>}} [options.clipboard]
  */
-function makeWindow({ execCommand = 'none', clipboard } = {}) {
-  const state = { element: null };
+function makeWindow({ execCommand = 'none', clipboard, files = false, chips = [] } = {}) {
+  const state = { element: null, chips };
 
   const doc = {
     activeElement: null,
@@ -48,6 +51,7 @@ function makeWindow({ execCommand = 'none', clipboard } = {}) {
         return element.tagName === 'TEXTAREA' && element.isComposer === true ? [element] : [];
       }
       if (selector === 'textarea') return element.tagName === 'TEXTAREA' ? [element] : [];
+      if (selector === '*') return [element, ...state.chips];
       return [];
     },
     getSelection() {
@@ -90,12 +94,37 @@ function makeWindow({ execCommand = 'none', clipboard } = {}) {
       this.bubbles = true;
     }
   }
+  /** Minimal DataTransferItemList: `add` records a file item. */
+  class FakeItemList {
+    constructor() {
+      this.items = [];
+    }
+    add(file) {
+      this.items.push({ kind: 'file', getAsFile: () => file });
+    }
+    [Symbol.iterator]() {
+      return this.items[Symbol.iterator]();
+    }
+  }
+  if (files === true) {
+    // `items.add(file)` is how the composer's paste handler sees a file.
+    FakeDataTransfer.prototype.items = new FakeItemList();
+  }
+  class FakeFile {
+    constructor(parts, name, init) {
+      this.name = name;
+      this.type = init?.type ?? '';
+      this.text = parts.join('');
+      this.size = this.text.length;
+    }
+  }
 
   const win = {
     document: doc,
     DataTransfer: FakeDataTransfer,
     ClipboardEvent: FakeClipboardEvent,
     Event: FakeEvent,
+    File: files === true ? FakeFile : undefined,
     HTMLTextAreaElement: { prototype: {} },
     requestAnimationFrame(callback) {
       callback(0);
@@ -103,6 +132,9 @@ function makeWindow({ execCommand = 'none', clipboard } = {}) {
     navigator: { clipboard },
     setComposer(element) {
       state.element = element;
+    },
+    setChips(chips) {
+      state.chips = chips;
     },
   };
   win.parent = win;
@@ -120,6 +152,7 @@ function makeElement(win, { tagName = 'DIV', editor = 'none', text = '' } = {}) 
     tagName,
     textContent: text,
     value: text,
+    children: [],
     disabled: false,
     readOnly: false,
     isComposer: true,
@@ -145,6 +178,27 @@ function makeElement(win, { tagName = 'DIV', editor = 'none', text = '' } = {}) 
       const handler = listeners.get(event.type);
       if (handler !== undefined) handler(event);
       if (event.type === 'paste') {
+        // Simulate the composer's intake: a file item becomes a chip in the rail.
+        const items = event.clipboardData?.items;
+        if (items !== undefined) {
+          for (const item of items) {
+            if (item.kind !== 'file') continue;
+            const file = item.getAsFile();
+            if (file === null) continue;
+            win.setChips([
+              ...(win.document.querySelectorAll('*').filter((node) => node.isChip === true)),
+              {
+                isChip: true,
+                children: [],
+                textContent: file.name,
+                getAttribute: () => null,
+                getClientRects: () => [{ width: 120, height: 24 }],
+              },
+            ]);
+            event.defaultPrevented = true;
+          }
+          if (event.defaultPrevented === true) return true;
+        }
         if (editor === 'paste') {
           element.textContent += event.clipboardData.getData('text/plain');
           event.defaultPrevented = true;
@@ -251,6 +305,60 @@ await check('empty text is rejected before touching the page', async () => {
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'empty');
   assert.equal(element.textContent, '');
+});
+
+await check('attachment names are stable and filesystem-safe', async () => {
+  assert.equal(attachmentName('msg-1234-abcd'), 'answer-msg-1234-abcd.md');
+  assert.equal(attachmentName('a b/c*d'), 'answer-abcd.md');
+  assert.match(attachmentName(''), /^answer-\d+\.md$/u);
+  assert.equal(attachmentName('x'.repeat(40)).length, 'answer-'.length + 24 + '.md'.length);
+});
+
+await check('a pasted file becomes a chip and is reported as an attachment', async () => {
+  const win = makeWindow({ files: true });
+  makeElement(win, { editor: 'paste', text: '' });
+  const result = await insertAsAttachment('answer body', { window: win, id: 'msg-1' });
+  assert.equal(result.ok, true);
+  assert.equal(result.via, 'attachment');
+  assert.equal(result.name, 'answer-msg-1.md');
+  assert.equal(win.document.querySelectorAll('*').filter((node) => node.isChip === true).length, 1);
+});
+
+await check('a paste that renders no chip reports no-chip instead of pretending', async () => {
+  const win = makeWindow({ files: true });
+  const element = makeElement(win, { editor: 'none', text: '' });
+  // Swallow the file paste: no rail entry appears.
+  element.dispatchEvent = () => true;
+  const result = await insertAsAttachment('answer body', { window: win, id: 'msg-2', timeoutMs: 120 });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'no-chip');
+  assert.equal(result.name, 'answer-msg-2.md');
+});
+
+await check('without the File API the attachment path declines cleanly', async () => {
+  const win = makeWindow({ files: false });
+  makeElement(win, { editor: 'paste', text: '' });
+  const result = await insertAsAttachment('answer body', { window: win });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'no-file-api');
+});
+
+await check('an empty answer is not attached', async () => {
+  const win = makeWindow({ files: true });
+  makeElement(win, { editor: 'paste', text: '' });
+  const result = await insertAsAttachment('   ', { window: win });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'empty');
+});
+
+await check('chip lookup matches by display name only', async () => {
+  const win = makeWindow({ files: true });
+  const element = makeElement(win, { editor: 'paste', text: '' });
+  win.setChips([{ isChip: true, children: [], textContent: 'unrelated.md', getAttribute: () => null }]);
+  assert.equal(findAttachmentChip(win.document, 'answer-x.md'), null);
+  win.setChips([{ isChip: true, children: [], textContent: 'answer-x.md', getAttribute: () => null }]);
+  assert.notEqual(findAttachmentChip(win.document, 'answer-x.md'), null);
+  assert.ok(element);
 });
 
 console.log(failures === 0 ? '\ncomposer bridge checks passed' : `\n${failures} check(s) failed`);

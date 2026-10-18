@@ -20,7 +20,7 @@ function reportFatal(message) {
   if (document.body) document.body.dataset.panelError = message;
   const banner = document.createElement('div');
   banner.className = 'fatal';
-  banner.textContent = `面板脚本出错：${message}`;
+  banner.textContent = ui('panelError', { message });
   document.body?.append(banner);
 }
 window.addEventListener('error', (event) => reportFatal(event.message || 'unknown error'));
@@ -77,6 +77,9 @@ const el = {
   selectInsert: document.getElementById('select-insert'),
   selectCopy: document.getElementById('select-copy'),
   selectCancel: document.getElementById('select-cancel'),
+  langToggle: document.getElementById('lang-toggle'),
+  emptyTitle: document.getElementById('empty-title'),
+  emptyTagline: document.getElementById('empty-tagline'),
 };
 
 /**
@@ -85,11 +88,11 @@ const el = {
  * Before sign-in the panel shows nothing but this screen: the transcript, the
  * composer and the context rails stay out of reach until a credential exists.
  */
-import { GATE_COPY, PANEL_COPY } from './gate-copy.js';
+import { GATE_COPY, PANEL_COPY, UI_COPY } from './gate-copy.js';
 // Aliased: this module already has a local `insertIntoComposer` that writes into
 // the panel's own textarea (the drag-and-drop fallback), which is a different
 // destination from the DSH composer.
-import { insertIntoComposer as insertIntoHostComposer, joinAnswers } from './composer-bridge.js';
+import { insertIntoComposer as insertIntoHostComposer, insertAsAttachment, joinAnswers } from './composer-bridge.js';
 
 /** Current gate language; persisted so it survives a reload. */
 function initialLang() {
@@ -128,6 +131,19 @@ function p(key) {
 }
 
 /**
+ * Panel chrome copy: everything the language toggle flips.
+ * @param {string} key
+ * @param {Record<string, string|number>} [values]
+ */
+function ui(key, values) {
+  const table = UI_COPY[state.lang] ?? UI_COPY.zh;
+  const text = table[key] ?? UI_COPY.zh[key] ?? key;
+  return values === undefined
+    ? text
+    : Object.entries(values).reduce((acc, [name, value]) => acc.replaceAll(`{${name}}`, String(value)), text);
+}
+
+/**
  * Copy with substitutions, e.g. `pf('selectedCount', { n: 3 })`.
  * @param {string} key
  * @param {Record<string, string|number>} values
@@ -154,7 +170,7 @@ function renderGateSteps() {
           openModal({
             title: `${step}. ${title}`,
             body: [h('img', { class: 'zoom-img', src: `guide/step${step}.svg`, alt: title })],
-            footer: [h('button', { text: state.lang === 'en' ? 'Close' : '关闭', onclick: closeModal })],
+            footer: [h('button', { text: ui('close'), onclick: closeModal })],
           }),
       });
       return h(
@@ -275,10 +291,10 @@ async function request(path, options = {}) {
 function formatRelative(seconds) {
   if (!seconds) return '';
   const delta = Date.now() / 1000 - seconds;
-  if (delta < 60) return '刚刚';
-  if (delta < 3600) return `${Math.floor(delta / 60)} 分钟前`;
-  if (delta < 86400) return `${Math.floor(delta / 3600)} 小时前`;
-  return `${Math.floor(delta / 86400)} 天前`;
+  if (delta < 60) return ui('justNow');
+  if (delta < 3600) return ui('minutesAgo', { n: Math.floor(delta / 60) });
+  if (delta < 86400) return ui('hoursAgo', { n: Math.floor(delta / 3600) });
+  return ui('daysAgo', { n: Math.floor(delta / 86400) });
 }
 
 /* -------------------------------------------------------- text rendering */
@@ -365,15 +381,15 @@ function renderAccount() {
   showGate(!state.signedIn);
   el.account.classList.toggle('signed-in', state.signedIn);
   el.who.textContent = state.signedIn
-    ? state.user?.name || state.user?.email || state.user?.mobile || '已登录'
-    : '未登录';
+    ? state.user?.name || state.user?.email || state.user?.mobile || ui('signedIn')
+    : ui('signedOut');
   el.account.title = state.signedIn
     ? state.sameAccount
-      ? `与 DSH 是同一个账号（${state.dshAccount?.contact ?? state.dshAccount?.name ?? '已验证'}）`
+      ? ui('sameAccountTitle', { account: state.dshAccount?.contact ?? state.dshAccount?.name ?? '' })
       : state.dshAccount?.contact
-        ? `DSH 已登录的账号是 ${state.dshAccount.contact}`
-        : '已登录 chat.deepseek.com'
-    : '未登录 chat.deepseek.com';
+        ? ui('dshAccountTitle', { account: state.dshAccount.contact })
+        : ui('webSignedInTitle')
+    : ui('webSignedOutTitle');
   el.signIn.hidden = state.signedIn;
   el.signOut.hidden = !state.signedIn;
   const disabled = !state.signedIn;
@@ -384,14 +400,14 @@ function renderAccount() {
   el.newChat.disabled = disabled;
   el.history.disabled = disabled || state.sessions.length === 0;
   el.input.placeholder = disabled
-    ? '先登录 chat.deepseek.com 账号后再提问…'
-    : '问点什么，Enter 发送，Shift+Enter 换行…';
+    ? ui('placeholderSignedOut')
+    : ui('placeholderReady');
   // A visible build tag: "the panel looks wrong" is usually a stale iframe, and
   // this makes that one glance instead of a conversation.
   const version = state.settings?.version ? `v${state.settings.version}` : '';
   if (version) {
-    el.note.textContent = `内容经本机转发到 chat.deepseek.com · ${version}`;
-    el.emptyHint.textContent = `Enter 发送 · Shift+Enter 换行 · 面板 ${version}`;
+    el.note.textContent = ui('note', { version });
+    el.emptyHint.textContent = ui('emptyHint', { version });
   }
 }
 
@@ -401,11 +417,63 @@ function renderToggles() {
 }
 
 /**
+ * Static chrome: the labels the language toggle flips.
+ *
+ * Kept separate from `renderAccount` because these do not depend on the account,
+ * and re-rendering them must not touch the transcript.
+ */
+function renderChrome() {
+  const version = state.settings?.version ? `v${state.settings.version}` : '';
+  el.langToggle.textContent = ui('language');
+  // The toggle advertises the language it switches *to*, so each label comes from
+  // the other table rather than from a literal here.
+  el.langToggle.title = state.lang === 'zh' ? 'English' : UI_COPY.zh.language;
+  el.newChat.textContent = ui('newChat');
+  el.newChat.title = ui('newChat');
+  el.history.textContent = ui('history');
+  el.history.title = ui('historyTitle');
+  el.signIn.textContent = ui('signIn');
+  el.signOut.textContent = ui('signOut');
+  el.send.textContent = ui('send');
+  el.attach.textContent = ui('attachFile');
+  el.attach.title = ui('attachFile');
+  el.pickSession.textContent = ui('sessions');
+  el.thinking.textContent = ui('thinking');
+  el.search.textContent = ui('search');
+  el.emptyTitle.textContent = 'DeepSeek Chat';
+  el.emptyTagline.textContent = ui('tagline');
+  if (version) {
+    el.note.textContent = ui('note', { version });
+    el.emptyHint.textContent = ui('emptyHint', { version });
+  }
+}
+
+/**
+ * Switch the interface language and repaint everything that carries text.
+ * @param {'zh'|'en'} lang
+ */
+function setLanguage(lang) {
+  state.lang = lang === 'en' ? 'en' : 'zh';
+  try {
+    window.localStorage.setItem('dsw-chat-lang', state.lang);
+  } catch {
+    /* storage may be unavailable */
+  }
+  document.documentElement.lang = state.lang === 'en' ? 'en' : 'zh-CN';
+  renderChrome();
+  renderAccount();
+  renderChips();
+  renderTranscript();
+  renderSelectBar();
+  if (gate.root !== null && !gate.root.hidden) renderGate();
+}
+
+/**
  * Context chips: three kinds share one rail — a workspace file addressed by path,
  * path, a dropped file whose text the browser read, and a DSH conversation
  * transcript addressed by session id.
  */
-const CONTEXT_ICON = { file: '文件', drop: '拖入', session: '会话' };
+const CONTEXT_ICON = { file: ui('kindFile'), drop: ui('kindDrop'), session: ui('kindSession') };
 
 function renderChips() {
   el.chips.replaceChildren(
@@ -413,11 +481,11 @@ function renderChips() {
       h(
         'span',
         { class: `chip chip-${item.kind}`, title: item.hint ?? item.label },
-        h('span', { class: 'chip-kind', text: CONTEXT_ICON[item.kind] ?? '内容' }),
+        h('span', { class: 'chip-kind', text: CONTEXT_ICON[item.kind] ?? ui('kindOther') }),
         h('span', { text: item.label }),
         h('button', {
           text: '×',
-          title: '移除',
+          title: ui('remove'),
           onclick: () => {
             state.context = state.context.filter((entry) => entry !== item);
             renderChips();
@@ -433,7 +501,7 @@ function addContext(item) {
   const key = `${item.kind}:${item.path ?? item.id ?? item.name}`;
   const exists = state.context.some((entry) => `${entry.kind}:${entry.path ?? entry.id ?? entry.name}` === key);
   if (exists) {
-    toast('这个内容已经在上下文里了');
+    toast(ui('alreadyInContext'));
     return;
   }
   state.context.push(item);
@@ -459,7 +527,7 @@ function renderTranscript() {
 function renderMessage(message, index = -1) {
   const bubble = h('div', { class: 'bubble' });
   if (message.text) bubble.append(renderRichText(message.text, message.sources ?? []));
-  if (message.pending && !message.text) bubble.append(h('span', { class: 'status-line', text: '正在思考…' }));
+  if (message.pending && !message.text) bubble.append(h('span', { class: 'status-line', text: ui('pondering') }));
 
   const parts = [];
   if (message.role === 'assistant' && message.thinking) {
@@ -467,13 +535,13 @@ function renderMessage(message, index = -1) {
       h(
         'details',
         { class: 'thinking' },
-        h('summary', { text: '深度思考' }),
+        h('summary', { text: ui('thinkingSummary') }),
         h('div', { class: 'body', text: message.thinking }),
       ),
     );
   }
   if (message.searchUsed) {
-    parts.push(h('div', { class: 'meta' }, h('span', { class: 'tag', text: '已联网搜索' })));
+    parts.push(h('div', { class: 'meta' }, h('span', { class: 'tag', text: ui('searched') })));
   }
   parts.push(bubble);
   if (message.role === 'assistant' && (message.sources ?? []).length > 0) {
@@ -487,7 +555,7 @@ function renderMessage(message, index = -1) {
         ),
       );
     }
-    parts.push(h('details', { class: 'sources-box' }, h('summary', { text: `来源（${message.sources.length}）` }), list));
+    parts.push(h('details', { class: 'sources-box' }, h('summary', { text: ui('sources', { n: message.sources.length }) }), list));
   }
   if (message.role === 'assistant' && message.tokens) {
     parts.push(h('div', { class: 'meta' }, h('span', { text: `${message.tokens} tokens` })));
@@ -518,6 +586,15 @@ function renderMessage(message, index = -1) {
       h('button', {
         class: 'ghost',
         type: 'button',
+        text: p('attach'),
+        title: p('attach'),
+        onclick: (event) => {
+          attachAnswer(message, index, event.currentTarget);
+        },
+      }),
+      h('button', {
+        class: 'ghost',
+        type: 'button',
         text: p('select'),
         onclick: () => {
           enterSelectMode();
@@ -529,7 +606,7 @@ function renderMessage(message, index = -1) {
   const wrapper = h(
     'div',
     { class: `msg ${message.role}${message.error ? ' error' : ''}` },
-    h('div', { class: 'role', text: message.role === 'user' ? '我' : 'DeepSeek' }),
+    h('div', { class: 'role', text: message.role === 'user' ? ui('roleMe') : 'DeepSeek' }),
     ...parts,
   );
   // The select circle only makes sense for finished answers, in select mode.
@@ -722,7 +799,52 @@ async function copySelectedAnswers() {
 }
 
 /**
- * Put one finished answer into the DSH composer.
+ * Put one finished answer into the DSH composer as a **file attachment**.
+ *
+ * The bridge pastes a synthetic `File`; the composer uploads it through its own
+ * intake path and renders a chip. When this DSH build does not turn the paste
+ * into a chip (or the file API is missing), the answer is inserted as text
+ * instead, and the toast says so.
+ * @param {{text?: string, id?: string}} message
+ * @param {number} index Message index, used for the file name when there is no id.
+ * @param {HTMLButtonElement} [button]
+ */
+async function attachAnswer(message, index, button) {
+  const text = String(message.text ?? '');
+  if (text.trim().length === 0) {
+    toast(p('insertEmpty'));
+    return;
+  }
+  if (inserting) return;
+  inserting = true;
+  if (button !== undefined) button.disabled = true;
+  try {
+    const result = await insertAsAttachment(text, {
+      lang: state.lang,
+      id: message.id ?? String(index),
+    });
+    if (result.ok) {
+      toast(p('attached'));
+      return;
+    }
+    // Fallback: the same answer as text, so the click never ends in nothing.
+    const fallback = await insertIntoHostComposer(text, { lang: state.lang });
+    if (fallback.ok) toast(p('attachedFallback'));
+    else if (fallback.via === 'clipboard' && !String(fallback.reason ?? '').includes('no-clipboard')) {
+      toast(p('insertedClipboard'));
+    } else {
+      toast(p('attachFailed'));
+    }
+  } catch (error) {
+    toast(String(error?.message ?? error));
+  } finally {
+    inserting = false;
+    if (button !== undefined) button.disabled = false;
+  }
+}
+
+/**
+ * Put one finished answer into the DSH composer as text.
  *
  * The bridge focuses the composer itself; nothing here sends the message, and
  * focus is never pulled back to the panel afterwards.
@@ -881,12 +1003,12 @@ async function send() {
         state.title = event.title;
       } else if (event.type === 'error') {
         assistant.error = true;
-        assistant.text = assistant.text || String(event.message ?? '请求失败');
+        assistant.text = assistant.text || String(event.message ?? ui('requestFailed'));
         repaintAssistant();
       }
     });
     if (!assistant.text && !assistant.error) {
-      assistant.text = '（没有收到内容）';
+      assistant.text = ui('noContent');
     }
     assistant.pending = false;
     repaintAssistant();
@@ -963,11 +1085,11 @@ function closeModal() {
  * id travels from this list.
  */
 async function openSessionPicker() {
-  const status = h('div', { class: 'status-line', text: '正在读取 DSH 会话…' });
+  const status = h('div', { class: 'status-line', text: ui('readingSessions') });
   openModal({
-    title: '把 DSH 会话记录加入上下文',
+    title: ui('dshSessionsTitle'),
     body: [status],
-    footer: [h('button', { text: '关闭', onclick: closeModal })],
+    footer: [h('button', { text: ui('close'), onclick: closeModal })],
   });
   try {
     const query = new URLSearchParams({ limit: '15' });
@@ -976,7 +1098,7 @@ async function openSessionPicker() {
     const list = h('div', { class: 'sessions' });
     const sessions = payload.sessions ?? [];
     if (sessions.length === 0) {
-      status.textContent = '这个工作区还没有可读取的 DSH 会话。';
+      status.textContent = ui('noDshSessions');
       return;
     }
     for (const session of sessions) {
@@ -988,24 +1110,24 @@ async function openSessionPicker() {
               addContext({
                 kind: 'session',
                 id: session.id,
-                label: session.title || `会话 ${session.id.slice(0, 8)}`,
-                hint: `${session.title ?? session.id} · ${session.messages ?? 0} 条消息`,
+                label: session.title || ui('sessionLabel', { id: session.id.slice(0, 8) }),
+                hint: `${session.title ?? session.id} · ${ui('messagesCount', { n: session.messages ?? 0 })}`,
               });
-              toast('会话原文会作为上下文发给 chat.deepseek.com');
+              toast(ui('transcriptNotice'));
               closeModal();
             },
           },
-          h('span', { class: 't', text: session.title || `会话 ${session.id.slice(0, 8)}` }),
+          h('span', { class: 't', text: session.title || ui('sessionLabel', { id: session.id.slice(0, 8) }) }),
           h('span', {
             class: 'd',
-            text: `${session.messages ?? 0} 条消息${session.error ? ` · ${session.error}` : ''}`,
+            text: `${ui('messagesCount', { n: session.messages ?? 0 })}${session.error ? ` · ${session.error}` : ''}`,
           }),
         ),
       );
     }
     status.replaceWith(list);
   } catch (error) {
-    status.textContent = `读取失败：${String(error?.message ?? error)}`;
+    status.textContent = ui('readFailed', { message: String(error?.message ?? error) });
   }
 }
 
@@ -1024,16 +1146,16 @@ function openHistory() {  const list = h('div', { class: 'sessions' });
             }
           },
         },
-        h('span', { class: 't', text: session.title || '(无标题)' }),
+        h('span', { class: 't', text: session.title || ui('untitled') }),
         h('span', { class: 'd', text: formatRelative(session.updatedAt) }),
       ),
     );
   }
-  if (state.sessions.length === 0) list.append(h('div', { class: 'status-line', text: '还没有历史会话。' }));
+  if (state.sessions.length === 0) list.append(h('div', { class: 'status-line', text: ui('noHistory') }));
   openModal({
-    title: '历史会话',
+    title: ui('historyTitle'),
     body: [list],
-    footer: [h('button', { text: '关闭', onclick: closeModal })],
+    footer: [h('button', { text: ui('close'), onclick: closeModal })],
   });
 }
 
@@ -1047,7 +1169,7 @@ async function openFilePicker(path = '') {
         'li',
         { class: 'up', onclick: () => openFilePicker(parentOf(path)) },
         h('span', { class: 'icon', text: '↑' }),
-        h('span', { class: 'name', text: '返回上级' }),
+        h('span', { class: 'name', text: ui('back') }),
       ),
     );
   }
@@ -1068,15 +1190,15 @@ async function openFilePicker(path = '') {
     list.append(row);
   }
   if ((payload.entries ?? []).length === 0) {
-    list.append(h('li', {}, h('span', { class: 'name', text: '（空目录）' })));
+    list.append(h('li', {}, h('span', { class: 'name', text: ui('emptyDirectory') })));
   }
   const crumbs = h('div', { id: 'path-crumbs', text: `${payload.root ?? ''}/${payload.path ?? ''}` });
   openModal({
-    title: '选择工作区文件作为上下文',
+    title: ui('filesTitle'),
     body: [crumbs, list],
     footer: [
       h('button', {
-        text: '清空',
+        text: ui('clear'),
         onclick: () => {
           state.context = [];
           state.pickerSelection.clear();
@@ -1086,7 +1208,7 @@ async function openFilePicker(path = '') {
       }),
       h('button', {
         class: 'primary',
-        text: '完成',
+        text: ui('done'),
         onclick: () => {
           for (const path of state.pickerSelection) {
             addContext({ kind: 'file', path, label: path.split('/').pop(), hint: path });
@@ -1165,22 +1287,22 @@ function showDropOverlay(visible) {
 async function addDroppedFile(file) {
   const max = Number(state.settings?.maxFileBytes ?? 200_000);
   if (file.size === 0) {
-    toast(`${file.name} 是空文件`);
+    toast(ui('emptyFile', { name: file.name }));
     return;
   }
   if (file.size > max) {
-    toast(`${file.name} 超过 ${Math.round(max / 1024)} KB 上限`);
+    toast(ui('fileTooLarge', { name: file.name, size: Math.round(max / 1024) }));
     return;
   }
   let text;
   try {
     text = await file.text();
   } catch (error) {
-    toast(`读不到 ${file.name}：${String(error?.message ?? error)}`);
+    toast(ui('fileUnreadable', { name: file.name, message: String(error?.message ?? error) }));
     return;
   }
   if (text.includes('\u0000')) {
-    toast(`${file.name} 看起来是二进制文件，只支持文本`);
+    toast(ui('fileBinary', { name: file.name }));
     return;
   }
   addContext({
@@ -1188,7 +1310,7 @@ async function addDroppedFile(file) {
     name: file.name,
     text,
     label: file.name,
-    hint: `${file.name} · ${Math.max(1, Math.round(file.size / 1024))} KB（拖入）`,
+    hint: `${file.name} · ${Math.max(1, Math.round(file.size / 1024))} KB`,
   });
 }
 
@@ -1198,12 +1320,12 @@ async function addDroppedSession(id) {
     addContext({
       kind: 'session',
       id,
-      label: preview.title ?? `会话 ${id.slice(0, 8)}`,
-      hint: `${preview.title ?? id} · ${preview.messages} 条消息 · ${Math.round((preview.bytes ?? 0) / 1024)} KB`,
+      label: preview.title ?? ui('sessionLabel', { id: id.slice(0, 8) }),
+      hint: `${preview.title ?? id} · ${ui('messagesCount', { n: preview.messages })} · ${Math.round((preview.bytes ?? 0) / 1024)} KB`,
     });
-    toast('会话原文会作为上下文发给 chat.deepseek.com');
+    toast(ui('transcriptNotice'));
   } catch (error) {
-    toast(`无法读取这个会话：${String(error?.message ?? error)}`);
+    toast(ui('readFailed', { message: String(error?.message ?? error) }));
   }
 }
 
@@ -1243,7 +1365,7 @@ document.addEventListener('drop', (event) => {
     // apart from "the drag never reached the iframe".
     const types = event.dataTransfer ? Array.from(event.dataTransfer.types) : [];
     document.body.dataset.dropTypes = types.join(',') || '(none)';
-    if (types.length > 0) toast(`拖拽内容类型 ${types.join(' / ')} 暂不支持`);
+    if (types.length > 0) toast(ui('unsupportedTypes', { types: types.join(' / ') }));
     return;
   }
   event.preventDefault();
@@ -1251,7 +1373,7 @@ document.addEventListener('drop', (event) => {
   showDropOverlay(false);
   document.body.dataset.dropTypes = Array.from(event.dataTransfer?.types ?? []).join(',');
   if (!state.signedIn) {
-    toast('先登录 chat.deepseek.com 账号');
+    toast(ui('signedOutFirst'));
     return;
   }
   if (kinds.files && (event.dataTransfer?.files?.length ?? 0) > 0) {
@@ -1281,7 +1403,7 @@ document.addEventListener('drop', (event) => {
     insertIntoComposer(text);
     return;
   }
-  toast('这个拖拽内容暂不支持，试试拖文件或侧边栏的会话');
+  toast(ui('unsupportedDrop'));
 });
 
 /** A single-line, path-shaped string: safe to treat as a workspace path. */
@@ -1356,15 +1478,14 @@ for (const [button, lang] of [
   [gate.langEn, 'en'],
 ]) {
   button.addEventListener('click', () => {
-    state.lang = lang;
-    try {
-      window.localStorage.setItem('dsw-chat-lang', lang);
-    } catch {
-      /* storage may be unavailable */
-    }
-    renderGate();
+    setLanguage(lang);
   });
 }
+
+// The top-bar toggle flips the whole panel, gate included.
+el.langToggle.addEventListener('click', () => {
+  setLanguage(state.lang === 'zh' ? 'en' : 'zh');
+});
 
 function autoready() {
   el.input.style.height = 'auto';
@@ -1395,7 +1516,7 @@ el.signOut.addEventListener('click', async () => {
     renderAccount();
     renderTranscript();
     refreshSessions().catch(() => {});
-    toast('已退出');
+    toast(ui('loggedOut'));
   } catch (error) {
     toast(String(error.message ?? error));
   }
@@ -1444,6 +1565,8 @@ el.selectCancel.addEventListener('click', exitSelectMode);
 
 (async function boot() {
   document.body.dataset.boot = 'started';
+  document.documentElement.lang = state.lang === 'en' ? 'en' : 'zh-CN';
+  renderChrome();
   renderAccount();
   renderToggles();
   renderChips();
