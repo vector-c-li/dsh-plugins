@@ -130,7 +130,7 @@ ln -s ~/dsh-plugins/plugins/deepseek-web-chat ~/.dsh/profiles/desktop/node_modul
 - 从检出目录开发：保留 `file://` 那行，把组合包卸掉；
 - 从 git 安装：保留组合包，停用（或从 `$DSH_HOME/profiles/desktop/cordis.patch.yml` 删掉）`file://` 那行。
 
-`v0.5.5` 起，这种情况会打印一条可读的警告，而不是让整行启用失败。
+`v0.5.6` 起，这种情况会打印一条可读的警告，而不是让整行启用失败。
 
 **安装时报 `连接 GitHub 超时` / `无法访问 GitHub`**
 Host 是通过 **git** 去取 GitHub 的，所以浏览器能开、直连被墙时安装仍会超时。两条出路：
@@ -215,6 +215,28 @@ scope 的工厂（`slots.register({ name: 'conversation.session', store })`）�
 `[data-composer-input]` → `[role="textbox"][contenteditable="true"]` → 任意可见可编辑元素。
 DSH 自己的类名是 CSS-module 哈希，不作依赖。
 
+## 多选批量插入
+
+任意回答上的 **多选** 会进入多选态：每条完成的回答左侧出现勾选圈，动作行让位，输入框上方浮出
+`已选 N 条 · 插入 N 条 · 复制 N 条 · 取消`。用「取消」、`Esc`，或插入/复制完成后自动退出。
+
+选中的回答作为**一整段**插入，按对话顺序（旧的在前）：
+
+- 条与条之间用一个空行 + `---` + 空行分隔；
+- 每条可带来源标记 `> 来自 DeepSeek Chat · 第 N 条`（英文 `· #N`），与单条插入一样默认关闭；
+- 只选一条时，产出与单条按钮**完全一致**：没有分隔符，序号为 1。
+
+上限在写入前检查，**绝不静默截断**：
+
+| 上限 | 阈值 | 行为 |
+|---|---|---|
+| 条数 | 超过 8 条 | 先询问：`内容较长，建议分批插入（当前 N 条 / M 字符）`，可选**仍然插入** / **取消** |
+| 字符 | 超过 20000 | 同样的询问 |
+
+整批只调用一次 `insertIntoComposer`，所以光标只移动一次，结束后焦点在主输入框。
+排序、分隔符、编号与上限都由 `composer-bridge.js` 的 `joinAnswers()` 负责；面板只负责渲染操作条
+和把选中项传进去。
+
 ## 开发
 
 ```powershell
@@ -224,6 +246,7 @@ node scripts/route-smoke.mjs           # 用假 ctx 跑 HTTP 面
 node scripts/wasm-fallback-check.mjs   # 没有 assets 的安装：下载一次、之后复用
 node scripts/panel-refs-check.mjs      # panel script reads only declared fields
 node scripts/composer-bridge-check.mjs # composer insertion tiers (fake DOM)
+node scripts/batch-insert-check.mjs        # multi-select ordering, separators, limits
 node scripts/live-check.mjs            # 对着运行中的 DSH（自签浏览器 cookie）
 node scripts/live-chat.mjs --dsh-session <id>   # 真实提问，打印答案与引用
 node scripts/preview.mjs               # 面板 UI 的静态预览服务

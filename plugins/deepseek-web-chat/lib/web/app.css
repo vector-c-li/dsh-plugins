@@ -343,6 +343,52 @@ code.inline {
   border-radius: 999px;
 }
 .msg-actions button:disabled { opacity: 0.5; }
+/* `display: flex` above would beat the UA `[hidden]` rule, so hide explicitly. */
+.msg-actions[hidden] { display: none; }
+
+/* ---------- multi-select ---------- */
+/* The circle lives in an extra left gutter that only exists in select mode, so
+   the transcript keeps its height and nothing overlaps the text. */
+.msg.assistant.msg-selectable { position: relative; padding-left: 24px; }
+.msg-select-check {
+  position: absolute;
+  left: 0;
+  top: 14px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--dsw-border);
+  background: var(--dsw-bg-elev);
+  color: var(--dsw-accent);
+  font-size: 11px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.msg-select-check[aria-pressed="true"] {
+  border-color: var(--dsw-accent);
+  background: var(--dsw-accent-weak);
+}
+.msg-select-check:focus-visible { outline: 2px solid var(--dsw-accent); outline-offset: 1px; }
+.msg.msg-selected { background: color-mix(in srgb, var(--dsw-accent) 6%, transparent); border-radius: var(--dsw-radius-sm); }
+
+#select-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--dsw-border);
+  background: var(--dsw-bg-elev);
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.08);
+}
+#select-bar[hidden] { display: none; }
+#select-bar .spacer { flex: 1; }
+#select-count { font-size: 12px; color: var(--dsw-text-2); }
+#select-bar button { font-size: 12px; padding: 4px 10px; }
+#select-bar button:disabled { opacity: 0.5; }
 
 a.citation {
   display: inline-flex;

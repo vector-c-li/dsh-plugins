@@ -133,7 +133,7 @@ over from before, plus the installed bundle. Disable one of them in **Plugins**,
 - installed from git? keep the bundle and disable the `file://` row (or delete that row from
   `$DSH_HOME/profiles/desktop/cordis.patch.yml`).
 
-`v0.5.5` and later log a readable warning for this case instead of failing activation.
+`v0.5.6` and later log a readable warning for this case instead of failing activation.
 
 **`连接 GitHub 超时` / `无法访问 GitHub` while installing**
 The Host reaches GitHub through git, so a blocked direct route fails the install even when a browser
@@ -192,6 +192,31 @@ The composer selector lives in one constant (`COMPOSER_SELECTORS` in `composer-b
 `[data-composer-input]` first, then `[role="textbox"][contenteditable="true"]`, then any visible
 editable. DSH's own class names are CSS-module hashes and are never used.
 
+## Batch insert
+
+**Select** on any answer enters multi-select mode: every finished answer gets a circle in its gutter,
+the per-answer action rows step aside, and a bar appears above the composer with
+`N selected · Insert N · Copy N · Cancel`. Leave it with `Cancel`, `Esc`, or by inserting/copying.
+
+The selection is inserted as **one** document, in conversation order (oldest first):
+
+- answers are separated by a blank line, `---`, blank line;
+- each answer can carry `> 来自 DeepSeek Chat · 第 N 条` (or `· #N` in English), off by default like
+  the single-answer marker;
+- a single selected answer produces exactly the same payload as the single-answer button — no
+  separator, numbering `1`.
+
+Limits are checked before anything is written, and nothing is ever truncated:
+
+| Limit | Threshold | Behaviour |
+|---|---|---|
+| Answers | more than 8 | asks first: `That is a lot of text — consider batches (N answers / M characters)` with **Insert anyway** / **Cancel** |
+| Characters | more than 20000 | same prompt |
+
+The whole batch goes through the same `insertIntoComposer` call, so the caret moves once and the
+composer is focused when it ends. `joinAnswers()` in `composer-bridge.js` owns the ordering,
+separators, numbering and limits; the panel only renders the bar and passes the selection.
+
 ## Configuration
 
 All keys are optional; they go in the row's `config` block.
@@ -232,6 +257,7 @@ node scripts/route-smoke.mjs           # HTTP surface on a fake ctx
 node scripts/wasm-fallback-check.mjs   # install without assets: download + reuse the module
 node scripts/panel-refs-check.mjs      # panel script reads only declared fields
 node scripts/composer-bridge-check.mjs # composer insertion tiers (fake DOM)
+node scripts/batch-insert-check.mjs        # multi-select ordering, separators, limits
 node scripts/live-check.mjs            # against a running DSH (mints a browser cookie)
 node scripts/live-chat.mjs --dsh-session <id>   # real answer, prints text + citations
 node scripts/preview.mjs               # static preview server for the panel UI

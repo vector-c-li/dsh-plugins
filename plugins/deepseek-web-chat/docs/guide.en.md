@@ -72,7 +72,7 @@ x7Qm2Rb9Lk4Tp8Nv...
 userToken: x7Qm2Rb9Lk4Tp8Nv...
 ```
 
-On success the box clears, the version tag (e.g. `v0.5.5`) appears at the bottom right, and the
+On success the box clears, the version tag (e.g. `v0.5.6`) appears at the bottom right, and the
 top bar shows your masked account.
 
 ---

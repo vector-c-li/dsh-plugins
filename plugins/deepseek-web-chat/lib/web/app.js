@@ -43,6 +43,9 @@ const state = {
   pickerPath: '',
   pickerSelection: new Set(),
   lang: initialLang(),
+  /** Multi-select mode over finished answers; `selected` holds message indexes. */
+  selecting: false,
+  selected: new Set(),
 };
 
 const el = {
@@ -69,6 +72,11 @@ const el = {
   modalFoot: document.getElementById('modal-foot'),
   drop: document.getElementById('drop-overlay'),
   toast: document.getElementById('toast'),
+  selectBar: document.getElementById('select-bar'),
+  selectCount: document.getElementById('select-count'),
+  selectInsert: document.getElementById('select-insert'),
+  selectCopy: document.getElementById('select-copy'),
+  selectCancel: document.getElementById('select-cancel'),
 };
 
 /**
@@ -81,7 +89,7 @@ import { GATE_COPY, PANEL_COPY } from './gate-copy.js';
 // Aliased: this module already has a local `insertIntoComposer` that writes into
 // the panel's own textarea (the drag-and-drop fallback), which is a different
 // destination from the DSH composer.
-import { insertIntoComposer as insertIntoHostComposer } from './composer-bridge.js';
+import { insertIntoComposer as insertIntoHostComposer, joinAnswers } from './composer-bridge.js';
 
 /** Current gate language; persisted so it survives a reload. */
 function initialLang() {
@@ -117,6 +125,18 @@ function t(key) {
 /** Copy for the message action row, in the active language. */
 function p(key) {
   return (PANEL_COPY[state.lang] ?? PANEL_COPY.zh)[key] ?? key;
+}
+
+/**
+ * Copy with substitutions, e.g. `pf('selectedCount', { n: 3 })`.
+ * @param {string} key
+ * @param {Record<string, string|number>} values
+ */
+function pf(key, values) {
+  return Object.entries(values).reduce(
+    (text, [name, value]) => text.replaceAll(`{${name}}`, String(value)),
+    p(key),
+  );
 }
 
 /** Build the illustrated four-step guide (thumbnails zoom into a modal). */
@@ -430,12 +450,13 @@ function renderEmpty() {
 
 function renderTranscript() {
   el.transcript.replaceChildren();
-  for (const message of state.messages) el.transcript.append(renderMessage(message));
+  state.messages.forEach((message, index) => el.transcript.append(renderMessage(message, index)));
   el.empty.hidden = state.messages.length > 0;
+  renderSelectBar();
   scrollToBottom();
 }
 
-function renderMessage(message) {
+function renderMessage(message, index = -1) {
   const bubble = h('div', { class: 'bubble' });
   if (message.text) bubble.append(renderRichText(message.text, message.sources ?? []));
   if (message.pending && !message.text) bubble.append(h('span', { class: 'status-line', text: '正在思考…' }));
@@ -473,36 +494,63 @@ function renderMessage(message) {
   }
   // Copy / insert belong to finished answers only: streaming text would land in
   // the composer half-written.
-  if (message.role === 'assistant' && !message.pending && String(message.text ?? '').trim().length > 0) {
-    parts.push(
-      h(
-        'div',
-        { class: 'msg-actions' },
-        h('button', {
-          class: 'ghost',
-          type: 'button',
-          text: p('copy'),
-          onclick: () => {
-            copyAnswer(message);
-          },
-        }),
-        h('button', {
-          class: 'ghost',
-          type: 'button',
-          text: p('insert'),
-          onclick: (event) => {
-            insertAnswer(message, event.currentTarget);
-          },
-        }),
-      ),
+  const answerable = message.role === 'assistant' && !message.pending && String(message.text ?? '').trim().length > 0;
+  if (answerable) {
+    const actions = h(
+      'div',
+      { class: 'msg-actions', hidden: state.selecting },
+      h('button', {
+        class: 'ghost',
+        type: 'button',
+        text: p('copy'),
+        onclick: () => {
+          copyAnswer(message);
+        },
+      }),
+      h('button', {
+        class: 'ghost',
+        type: 'button',
+        text: p('insert'),
+        onclick: (event) => {
+          insertAnswer(message, event.currentTarget);
+        },
+      }),
+      h('button', {
+        class: 'ghost',
+        type: 'button',
+        text: p('select'),
+        onclick: () => {
+          enterSelectMode();
+        },
+      }),
     );
+    parts.push(actions);
   }
-  return h(
+  const wrapper = h(
     'div',
     { class: `msg ${message.role}${message.error ? ' error' : ''}` },
     h('div', { class: 'role', text: message.role === 'user' ? '我' : 'DeepSeek' }),
     ...parts,
   );
+  // The select circle only makes sense for finished answers, in select mode.
+  if (answerable && state.selecting) {
+    const picked = state.selected.has(index);
+    wrapper.classList.add('msg-selectable');
+    wrapper.classList.toggle('msg-selected', picked);
+    wrapper.prepend(
+      h('button', {
+        class: 'msg-select-check',
+        type: 'button',
+        'aria-pressed': String(picked),
+        'aria-label': p('select'),
+        text: picked ? '✓' : '',
+        onclick: () => {
+          toggleSelected(index);
+        },
+      }),
+    );
+  }
+  return wrapper;
 }
 
 function scrollToBottom() {
@@ -531,6 +579,147 @@ async function copyAnswer(message) {
 
 /** One insertion at a time: a second click must not interleave with the first. */
 let inserting = false;
+
+/* ------------------------------------------------------------ multi-select */
+
+/** Turn multi-select on; the action rows give way to selection circles. */
+function enterSelectMode() {
+  if (state.selecting) return;
+  state.selecting = true;
+  state.selected.clear();
+  renderTranscript();
+}
+
+/** Leave multi-select and forget the selection. */
+function exitSelectMode() {
+  if (!state.selecting) return;
+  state.selecting = false;
+  state.selected.clear();
+  renderSelectBar();
+  renderTranscript();
+}
+
+/**
+ * Toggle one answer. Only the touched node and the bar are updated, so the
+ * transcript never jumps while the user is picking.
+ * @param {number} index Message index in `state.messages`.
+ * @param {Element | null} node The `.msg` wrapper, when the click came from a circle.
+ */
+function toggleSelected(index, node) {
+  if (state.selected.has(index)) state.selected.delete(index);
+  else state.selected.add(index);
+  const picked = state.selected.has(index);
+  if (node !== null && node !== undefined) {
+    node.classList.toggle('msg-selected', picked);
+    const circle = node.querySelector('.msg-select-check');
+    if (circle !== null) {
+      circle.setAttribute('aria-pressed', String(picked));
+      circle.textContent = picked ? '✓' : '';
+    }
+  }
+  renderSelectBar();
+}
+
+/** Selected answers in conversation order, ready for `joinAnswers`. */
+function selectedAnswers() {
+  return [...state.selected]
+    .filter((index) => state.messages[index] !== undefined)
+    .sort((left, right) => left - right)
+    .map((index) => ({ text: String(state.messages[index].text ?? ''), at: index }));
+}
+
+/** Reflect the selection in the floating bar. */
+function renderSelectBar() {
+  if (!state.selecting) {
+    el.selectBar.hidden = true;
+    return;
+  }
+  const count = state.selected.size;
+  el.selectCount.textContent = pf('selectedCount', { n: count });
+  el.selectInsert.textContent = pf('insertSelected', { n: count });
+  el.selectCopy.textContent = pf('copySelected', { n: count });
+  el.selectCancel.textContent = p('cancel');
+  el.selectInsert.disabled = count === 0;
+  el.selectCopy.disabled = count === 0;
+  el.selectBar.hidden = false;
+}
+
+/**
+ * Ask before crossing a batch limit. Callback style on purpose: closing the
+ * dialog by Esc or by clicking the backdrop must not leave a pending promise.
+ * @param {{count: number, chars: number}} batch
+ * @param {() => void} onConfirm
+ */
+function confirmBatch(batch, onConfirm) {
+  openModal({
+    title: p('select'),
+    body: [h('div', { class: 'help', text: pf('tooLong', { n: batch.count, c: batch.chars }) })],
+    footer: [
+      h('button', { text: p('cancel'), onclick: closeModal }),
+      h('button', {
+        class: 'primary',
+        text: p('stillInsert'),
+        onclick: () => {
+          closeModal();
+          onConfirm();
+        },
+      }),
+    ],
+  });
+}
+
+/**
+ * Insert the whole selection in one call, so the caret moves once.
+ * @param {{text: string, count: number}} batch
+ */
+async function applyBatchInsert(batch) {
+  try {
+    const result = await insertIntoHostComposer(batch.text, { lang: state.lang });
+    if (result.ok) toast(pf('insertedSelected', { n: batch.count }));
+    else if (result.via === 'clipboard' && !String(result.reason ?? '').includes('no-clipboard')) {
+      toast(p('insertedClipboard'));
+    } else {
+      toast(p('insertFailed'));
+    }
+  } catch (error) {
+    toast(String(error?.message ?? error));
+  }
+  exitSelectMode();
+}
+
+/** Batch insert: same bridging as a single answer, one joined document. */
+async function insertSelectedAnswers() {
+  const answers = selectedAnswers();
+  if (answers.length === 0) {
+    toast(p('selectEmpty'));
+    return;
+  }
+  const batch = joinAnswers(answers, { lang: state.lang });
+  if (batch.overLimit) {
+    confirmBatch(batch, () => {
+      applyBatchInsert(batch);
+    });
+    return;
+  }
+  await applyBatchInsert(batch);
+}
+
+/** Batch copy: the same joined document, on the clipboard. */
+async function copySelectedAnswers() {
+  const answers = selectedAnswers();
+  if (answers.length === 0) {
+    toast(p('selectEmpty'));
+    return;
+  }
+  const batch = joinAnswers(answers, { lang: state.lang });
+  try {
+    await navigator.clipboard.writeText(batch.text);
+    toast(pf('copiedSelected', { n: batch.count }));
+  } catch (error) {
+    toast(String(error?.message ?? error));
+  }
+  exitSelectMode();
+}
 
 /**
  * Put one finished answer into the DSH composer.
@@ -600,6 +789,9 @@ async function refreshSessions() {
 async function openSession(sessionId) {
   const payload = await request('history', { body: { sessionId } });
   state.sessionId = payload.session?.id ?? sessionId;
+  // A different transcript invalidates any selection from the previous one.
+  state.selecting = false;
+  state.selected.clear();
   state.messages = (payload.messages ?? []).map((message) => ({
     role: message.role,
     text: message.text,
@@ -614,6 +806,8 @@ function newChat() {
   state.sessionId = null;
   state.messages = [];
   state.context = [];
+  state.selecting = false;
+  state.selected.clear();
   renderChips();
   renderTranscript();
   el.input.focus();
@@ -713,7 +907,7 @@ async function send() {
 function repaintAssistant() {
   const index = state.messages.length - 1;
   const node = el.transcript.lastElementChild;
-  const fresh = renderMessage(state.messages[index]);
+  const fresh = renderMessage(state.messages[index], index);
   if (node && node.classList.contains('msg')) node.replaceWith(fresh);
   else el.transcript.append(fresh);
   el.empty.hidden = true;
@@ -1227,8 +1421,19 @@ el.modal.addEventListener('click', (event) => {
   if (event.target === el.modal) closeModal();
 });
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') closeModal();
+  if (event.key !== 'Escape') return;
+  closeModal();
+  exitSelectMode();
 });
+
+// Multi-select bar: insert / copy the whole selection, or leave the mode.
+el.selectInsert.addEventListener('click', () => {
+  insertSelectedAnswers().catch((error) => toast(String(error?.message ?? error)));
+});
+el.selectCopy.addEventListener('click', () => {
+  copySelectedAnswers().catch((error) => toast(String(error?.message ?? error)));
+});
+el.selectCancel.addEventListener('click', exitSelectMode);
 
 /* ------------------------------------------------------------------- boot */
 

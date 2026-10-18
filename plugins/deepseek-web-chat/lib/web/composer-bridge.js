@@ -45,19 +45,78 @@ export const COMPOSER_SELECTORS = [
 export const TEXTAREA_SELECTORS = ['textarea[data-composer-input]', 'textarea'];
 
 const TEXTS = {
-  zh: { marker: '> 来自 DeepSeek Chat' },
-  en: { marker: '> From DeepSeek Chat' },
+  zh: { marker: '> 来自 DeepSeek Chat', markerAt: '> 来自 DeepSeek Chat · 第 {n} 条' },
+  en: { marker: '> From DeepSeek Chat', markerAt: '> From DeepSeek Chat · #{n}' },
 };
 
 /**
  * Prepend the source marker when the caller asks for it.
+ *
+ * `index` (1-based) appends the item number, which batch insert uses; leaving it
+ * out keeps single-answer behaviour byte-for-byte identical.
  * @param {string} text Answer body.
  * @param {'zh'|'en'} lang Panel language.
  * @param {boolean} withMarker
+ * @param {number} [index] 1-based position in a batch.
  */
-export function withSourceMarker(text, lang = 'zh', withMarker = false) {
+export function withSourceMarker(text, lang = 'zh', withMarker = false, index) {
   if (!withMarker) return text;
-  return `${(TEXTS[lang] ?? TEXTS.zh).marker}\n\n${text}`;
+  const base = (TEXTS[lang] ?? TEXTS.zh).marker;
+  if (index === undefined) return `${base}\n\n${text}`;
+  const numbered = (TEXTS[lang] ?? TEXTS.zh).markerAt.replace('{n}', String(index));
+  return `${numbered}\n\n${text}`;
+}
+
+/** Hard limits for a batch: the UI asks before crossing them, never truncates. */
+export const BATCH_LIMITS = {
+  /** Above this, the user is asked whether to insert anyway. */
+  maxAnswers: 8,
+  /** Above this many characters, the user is asked whether to insert anyway. */
+  maxChars: 20_000,
+  /** Separator between two answers. */
+  separator: '\n\n---\n\n',
+};
+
+/**
+ * Join several answers into one insertable document.
+ *
+ * Ordering is by `at` (a sortable timestamp or index), so a caller that passes a
+ * Set or a map-ordered list still produces chronological text. Nothing is
+ * truncated: when the batch crosses a limit the result says so and the caller
+ * decides.
+ *
+ * @param {Array<{text: string, at?: number}>} answers
+ * @param {object} [options]
+ * @param {'zh'|'en'} [options.lang]
+ * @param {boolean} [options.marker] Prefix each answer with its source line.
+ * @returns {{text: string, count: number, chars: number, overLimit: boolean, reasons: string[]}}
+ */
+export function joinAnswers(answers, options = {}) {
+  const list = (Array.isArray(answers) ? answers : [])
+    .filter((answer) => answer !== null && answer !== undefined)
+    .map((answer, order) => ({
+      text: String(answer.text ?? ''),
+      at: Number.isFinite(answer.at) ? answer.at : order,
+      order,
+    }))
+    .sort((left, right) => left.at - right.at || left.order - right.order);
+
+  const parts = list.map((answer, index) =>
+    withSourceMarker(answer.text, options.lang ?? 'zh', options.marker === true, index + 1),
+  );
+  const text = parts.join(BATCH_LIMITS.separator);
+
+  const reasons = [];
+  if (list.length > BATCH_LIMITS.maxAnswers) reasons.push('count');
+  if (text.length > BATCH_LIMITS.maxChars) reasons.push('chars');
+
+  return {
+    text,
+    count: list.length,
+    chars: text.length,
+    overLimit: reasons.length > 0,
+    reasons,
+  };
 }
 
 /**
