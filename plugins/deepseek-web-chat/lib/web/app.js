@@ -1130,49 +1130,104 @@ function closeModal() {
  * Click-to-add fallback for the dragged conversation: pick a DSH session from a
  * list instead of dragging it. The Host reads the transcript, so nothing but the
  * id travels from this list.
+ *
+ * A bare id list was unusable: sessions carry no title of their own, so rows showed
+ * only a session id, and empty sessions crowded out the real ones. Each row
+ * therefore shows the title DSH generated, counts, age, and a two-line preview of
+ * how the conversation opened and last answered — plus an expandable excerpt, so
+ * the user can see what will be attached before attaching it.
  */
 async function openSessionPicker() {
   const status = h('div', { class: 'status-line', text: ui('readingSessions') });
+  const search = h('input', {
+    class: 'session-search',
+    type: 'search',
+    placeholder: ui('dshSearch'),
+    'aria-label': ui('dshSearch'),
+  });
+  const list = h('div', { class: 'sessions' });
+  const hint = h('div', { class: 'status-line' });
+  const body = h('div', { class: 'session-picker' }, search, list, hint);
   openModal({
     title: ui('dshSessionsTitle'),
-    body: [status],
+    body: [status, body],
     footer: [h('button', { text: ui('close'), onclick: closeModal })],
   });
+  search.hidden = true;
   try {
     const query = new URLSearchParams({ limit: '15' });
     if (state.workspace?.root) query.set('cwd', state.workspace.root);
     const payload = await request(`dsh-sessions?${query.toString()}`);
-    const list = h('div', { class: 'sessions' });
     const sessions = payload.sessions ?? [];
     if (sessions.length === 0) {
       status.textContent = ui('noDshSessions');
+      hint.textContent = payload.hidden > 0 ? ui('dshHiddenEmpty', { n: payload.hidden }) : '';
       return;
     }
-    for (const session of sessions) {
-      list.append(
-        h(
-          'button',
-          {
-            onclick: () => {
-              addContext({
-                kind: 'session',
-                id: session.id,
-                label: session.title || ui('sessionLabel', { id: session.id.slice(0, 8) }),
-                hint: `${session.title ?? session.id} · ${ui('messagesCount', { n: session.messages ?? 0 })}`,
-              });
-              toast(ui('transcriptNotice'));
-              closeModal();
-            },
-          },
-          h('span', { class: 't', text: session.title || ui('sessionLabel', { id: session.id.slice(0, 8) }) }),
-          h('span', {
-            class: 'd',
-            text: `${ui('messagesCount', { n: session.messages ?? 0 })}${session.error ? ` · ${session.error}` : ''}`,
-          }),
-        ),
+    status.remove();
+
+    const rowFor = (session) => {
+      const excerpt = h('div', { class: 'session-excerpt', hidden: true });
+      const meta = [
+        ui('messagesCount', { n: session.messages ?? 0 }),
+        session.bytes > 0 ? ui('dshSize', { size: Math.max(1, Math.round(session.bytes / 1024)) }) : null,
+        session.createdAt ? formatRelative(session.createdAt) : null,
+      ]
+        .filter((part) => part !== null)
+        .join(' · ');
+
+      const row = h('div', { class: 'session-row', 'data-search': `${session.title} ${session.preview?.ask ?? ''} ${session.preview?.answer ?? ''}`.toLowerCase() });
+      const add = h('button', { class: 'session-main', type: 'button' });
+      add.append(
+        h('span', { class: 't', text: session.title || ui('untitled') }),
+        h('span', { class: 'd', text: meta }),
+        session.preview?.ask
+          ? h('span', { class: 'p' }, h('em', { text: `${ui('dshAsk')} ` }), h('span', { text: session.preview.ask }))
+          : null,
+        session.preview?.answer
+          ? h('span', { class: 'p' }, h('em', { text: `${ui('dshAnswer')} ` }), h('span', { text: session.preview.answer }))
+          : null,
       );
-    }
-    status.replaceWith(list);
+      add.addEventListener('click', () => {
+        addContext({
+          kind: 'session',
+          id: session.id,
+          label: session.title || ui('sessionLabel', { id: session.id.slice(0, 8) }),
+          hint: `${session.title ?? session.id} · ${ui('messagesCount', { n: session.messages ?? 0 })}`,
+        });
+        toast(ui('transcriptNotice'));
+        closeModal();
+      });
+
+      const toggle = h('button', { class: 'ghost session-toggle', type: 'button', text: ui('dshView') });
+      toggle.addEventListener('click', () => {
+        const open = excerpt.hidden;
+        if (open && excerpt.childElementCount === 0) {
+          for (const line of session.excerpt ?? []) excerpt.append(h('div', { class: 'line', text: line }));
+          if (excerpt.childElementCount === 0) excerpt.append(h('div', { class: 'line', text: ui('noContent') }));
+        }
+        excerpt.hidden = !open;
+        toggle.textContent = open ? ui('dshHide') : ui('dshView');
+      });
+
+      row.append(add, h('div', { class: 'session-side' }, toggle, excerpt));
+      return row;
+    };
+
+    for (const session of sessions) list.append(rowFor(session));
+    search.hidden = false;
+    hint.textContent = payload.hidden > 0 ? ui('dshHiddenEmpty', { n: payload.hidden }) : '';
+    search.addEventListener('input', () => {
+      const needle = search.value.trim().toLowerCase();
+      let shown = 0;
+      for (const row of list.children) {
+        const hit = needle === '' || String(row.dataset.search ?? '').includes(needle);
+        row.hidden = !hit;
+        if (hit) shown += 1;
+      }
+      if (shown === 0 && needle !== '') hint.textContent = ui('dshNoMatch');
+      else hint.textContent = payload.hidden > 0 ? ui('dshHiddenEmpty', { n: payload.hidden }) : '';
+    });
   } catch (error) {
     status.textContent = ui('readFailed', { message: String(error?.message ?? error) });
   }

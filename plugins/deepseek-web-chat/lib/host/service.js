@@ -12,19 +12,21 @@ import { randomUUID } from 'node:crypto';
 const REV = new URL(import.meta.url).searchParams.get('rev') ?? '';
 const load = (specifier) => import(new URL(`${specifier}${REV ? `?rev=${REV}` : ''}`, import.meta.url).href);
 
-const [{ createPowSolver }, { DeepSeekWebApi, WebApiError, CODE }, workspace, wasm] = await Promise.all([
+const [{ createPowSolver }, { DeepSeekWebApi, WebApiError, CODE }, workspace, wasm, dshSessionsModule] = await Promise.all([
   load('./pow.js'),
   load('./api.js'),
   load('./workspace.js'),
   load('./wasm.js'),
+  load('./dsh-sessions.js'),
 ]);
 const { readWorkspaceFile, listWorkspaceDirectory, resolveWorkspaceRoot } = workspace;
+const { readCachedTitle, pickerRow, visibleRows } = dshSessionsModule;
 
 /** Credential record key; the scope names this plugin, the id names the account. */
 const RECORD_KEY = 'deepseek-web-chat/account';
 
 /** Build tag shown in the panel; bump it whenever the panel document changes. */
-const PANEL_VERSION = '0.6.1';
+const PANEL_VERSION = '0.6.2';
 
 /** A DSH session id: `session-<uuid>`, tolerating a bare uuid. */
 const SESSION_ID = /^(?:session-)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
@@ -328,8 +330,15 @@ export function createService({ ctx, config, logger }) {
         throw new Error('这个拖拽内容不是有效的会话 id');
       }
       const transcript = await readSessionTranscript(id, { persistence: ctx.get('sessionPersistence'), logger });
-      const bytes = transcript.lines.reduce((total, line) => total + Buffer.byteLength(line, 'utf8'), 0);
-      return { id: transcript.id, title: transcript.title, messages: transcript.lines.length, bytes };
+      const cached = await readCachedTitle({ home: config.dshHome, id });
+      return {
+        id: transcript.id,
+        // The title DSH generated is what the sidebar shows, so a dropped chip
+        // reads the same as the row it came from.
+        title: cached.title ?? transcript.title,
+        messages: transcript.lines.length,
+        bytes: transcript.bytes,
+      };
     },
 
     /**
@@ -351,8 +360,10 @@ export function createService({ ctx, config, logger }) {
         .filter((snapshot) => snapshot.header?.origin !== 'subagent')
         .filter((snapshot) => (cwd === undefined ? true : samePath(snapshot.header?.cwd ?? '', cwd)))
         .sort((left, right) => (right.header?.createdAt ?? 0) - (left.header?.createdAt ?? 0))
-        .slice(0, limit);
-      const sessions = [];
+        // Read more than we show: the empty ones are dropped below.
+        .slice(0, limit * 3);
+      const rows = [];
+      let unreadable = 0;
       for (const snapshot of sorted) {
         const id = snapshot.header?.id;
         if (typeof id !== 'string') continue;
@@ -367,12 +378,28 @@ export function createService({ ctx, config, logger }) {
             logger,
             eventCount: Number.isInteger(snapshot.eventCount) ? snapshot.eventCount : undefined,
           });
-          sessions.push({ ...base, title: transcript.title, messages: transcript.lines.length });
+          const cached = await readCachedTitle({ home: config.dshHome, id });
+          rows.push(
+            pickerRow({
+              ...base,
+              cached: cached.title ?? transcript.cachedTitle ?? null,
+              firstAsk: cached.firstAsk ?? transcript.firstAsk ?? null,
+              first: transcript.first,
+              last: transcript.last,
+              lines: transcript.lines,
+              messages: transcript.lines.length,
+              bytes: transcript.bytes,
+            }),
+          );
         } catch (error) {
-          sessions.push({ ...base, title: `会话 ${id.slice(0, 8)}`, messages: 0, error: String(error?.message ?? error) });
+          // A session with no readable turn is not "broken", it is simply unused;
+          // `visibleRows` drops it and the panel says how many were hidden.
+          unreadable += 1;
+          logger.debug(`skipping DSH session ${id}: ${String(error?.message ?? error)}`);
         }
       }
-      return { sessions };
+      const { rows: visible, hidden } = visibleRows(rows);
+      return { sessions: visible.slice(0, limit), hidden: hidden + unreadable };
     },
 
     /**
@@ -666,7 +693,18 @@ export async function readSessionTranscript(sessionId, deps = {}) {
       .filter((text) => text.length >= 8 && !/^(?:session-|<|\{|\[|#|\/)/u.test(text));
     const titleText = asks.at(-1) ?? asks[0] ?? '';
     const title = titleText.length > 0 ? titleText.slice(0, 32) : sessionId.slice(0, 8);
-    return { id: sessionId, title: `DSH 会话 · ${title}`, lines: lines.slice(-MAX_TURNS) };
+    // The opening question identifies a conversation far better than the last
+    // follow-up, so both are returned and the picker decides.
+    const firstAsk = entries.find((entry) => entry.role === '用户' && entry.texts.join('').trim().length > 0);
+    const lastAnswer = [...entries].reverse().find((entry) => entry.role === '助手' && entry.texts.join('').trim().length > 0);
+    return {
+      id: sessionId,
+      title: `DSH 会话 · ${title}`,
+      lines: lines.slice(-MAX_TURNS),
+      first: firstAsk?.texts.join('\n') ?? null,
+      last: lastAnswer?.texts.join('\n') ?? null,
+      bytes: lines.reduce((total, line) => total + Buffer.byteLength(line, 'utf8'), 0),
+    };
   } finally {
     await handle.close?.();
   }

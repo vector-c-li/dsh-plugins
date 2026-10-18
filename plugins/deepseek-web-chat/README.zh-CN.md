@@ -131,7 +131,7 @@ ln -s ~/dsh-plugins/plugins/deepseek-web-chat ~/.dsh/profiles/desktop/node_modul
 - 从检出目录开发：保留 `file://` 那行，把组合包卸掉；
 - 从 git 安装：保留组合包，停用（或从 `$DSH_HOME/profiles/desktop/cordis.patch.yml` 删掉）`file://` 那行。
 
-`v0.6.1` 起，这种情况会打印一条可读的警告，而不是让整行启用失败。
+`v0.6.2` 起，这种情况会打印一条可读的警告，而不是让整行启用失败。
 
 **安装时报 `连接 GitHub 超时` / `无法访问 GitHub`**
 Host 是通过 **git** 去取 GitHub 的，所以浏览器能开、直连被墙时安装仍会超时。两条出路：
@@ -191,6 +191,21 @@ git 安装是快照：再粘一次 spec（或 `dsh plugin --profile desktop add 
 
 上下文是**提示词里的文本**，不是上传附件。DSH 会话里的工具调用会被折叠成一行统计，
 让长对话仍然可读。
+
+### 会话选择器
+
+DSH 的会话日志本身**不带标题**——侧栏显示的标题存在会话投影缓存里
+（`storages/session_projcache/sessions/<id>.json` → `record.rows.title.val`）。选择器会读它，所以每一行
+都用你熟悉的名字显示，并额外给出：
+
+- 标题、消息条数、体积、创建时间；
+- 两行预览：`问` 开场问题、`答` 最后一条回答；
+- **查看**：展开四行对话节选，先看清内容再决定要不要加入；
+- 搜索框：按标题与预览文字过滤。
+
+只是点了「新会话」还没聊过的空会话会被**隐藏**（以前它们占满列表，每行都是
+`会话 session-… · 0 条消息`），底部会写明隐藏了几个。标题顺序是
+`缓存标题 → 开场问题 → 占位符`，会话 id 永远不会是主标题。
 
 ## 插入 DSH
 
@@ -297,6 +312,7 @@ node scripts/client-smoke.mjs          # 客户端 bundle 注册 + 插槽注入�
 node scripts/route-smoke.mjs           # 用假 ctx 跑 HTTP 面
 node scripts/wasm-fallback-check.mjs   # 没有 assets 的安装：下载一次、之后复用
 node scripts/panel-refs-check.mjs      # panel script reads only declared fields
+node scripts/dsh-sessions-check.mjs    # 会话选择器：标题、预览、空会话隐藏
 node scripts/composer-bridge-check.mjs # composer insertion tiers (fake DOM)
 node scripts/ui-copy-check.mjs             # 两语言键一致、无残留字面量
 node scripts/attachment-gc-check.mjs       # 清理策略：会话引用的保留、我们插入的按期限删

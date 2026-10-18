@@ -133,7 +133,7 @@ over from before, plus the installed bundle. Disable one of them in **Plugins**,
 - installed from git? keep the bundle and disable the `file://` row (or delete that row from
   `$DSH_HOME/profiles/desktop/cordis.patch.yml`).
 
-`v0.6.1` and later log a readable warning for this case instead of failing activation.
+`v0.6.2` and later log a readable warning for this case instead of failing activation.
 
 **`连接 GitHub 超时` / `无法访问 GitHub` while installing**
 The Host reaches GitHub through git, so a blocked direct route fails the install even when a browser
@@ -309,6 +309,21 @@ Three sources share one chip rail:
 Context is **text in the prompt**, not an uploaded attachment. Tool calls inside a DSH conversation
 are collapsed into a one-line tally, so long agentic transcripts stay readable.
 
+### The session picker
+
+A DSH session log carries no title of its own — the title the sidebar shows lives in the session
+projection cache (`storages/session_projcache/sessions/<id>.json` → `record.rows.title.val`). The picker
+reads it, so rows are named the way you named that conversation, and each row shows:
+
+- the title, the message count, the size and how long ago it was created;
+- a two-line preview: `问` the opening question, `答` the last answer;
+- **查看 / View**, which expands a four-line transcript excerpt before you commit to attaching it;
+- a search box that filters on title and preview text.
+
+Sessions you created by pressing *new chat* and never used are **hidden** — they used to fill the list
+with `会话 session-… 0 条消息` rows — and the footer says how many were hidden. The title chain is
+`cached title → opening question → placeholder`; a session id is never the primary label.
+
 ## Development
 
 ```powershell
@@ -317,6 +332,7 @@ node scripts/client-smoke.mjs          # bundle registration + slot injection (f
 node scripts/route-smoke.mjs           # HTTP surface on a fake ctx
 node scripts/wasm-fallback-check.mjs   # install without assets: download + reuse the module
 node scripts/panel-refs-check.mjs      # panel script reads only declared fields
+node scripts/dsh-sessions-check.mjs    # picker titles, previews, hidden empty sessions
 node scripts/composer-bridge-check.mjs # composer insertion tiers (fake DOM)
 node scripts/batch-insert-check.mjs        # multi-select ordering, separators, limits
 node scripts/ui-copy-check.mjs             # both languages agree, no stray literals
