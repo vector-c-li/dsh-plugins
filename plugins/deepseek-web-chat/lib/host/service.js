@@ -12,10 +12,11 @@ import { randomUUID } from 'node:crypto';
 const REV = new URL(import.meta.url).searchParams.get('rev') ?? '';
 const load = (specifier) => import(new URL(`${specifier}${REV ? `?rev=${REV}` : ''}`, import.meta.url).href);
 
-const [{ createPowSolver }, { DeepSeekWebApi, WebApiError, CODE }, workspace] = await Promise.all([
+const [{ createPowSolver }, { DeepSeekWebApi, WebApiError, CODE }, workspace, wasm] = await Promise.all([
   load('./pow.js'),
   load('./api.js'),
   load('./workspace.js'),
+  load('./wasm.js'),
 ]);
 const { readWorkspaceFile, listWorkspaceDirectory, resolveWorkspaceRoot } = workspace;
 
@@ -23,7 +24,7 @@ const { readWorkspaceFile, listWorkspaceDirectory, resolveWorkspaceRoot } = work
 const RECORD_KEY = 'deepseek-web-chat/account';
 
 /** Build tag shown in the panel; bump it whenever the panel document changes. */
-const PANEL_VERSION = '0.5.1';
+const PANEL_VERSION = '0.5.2';
 
 /** A DSH session id: `session-<uuid>`, tolerating a bare uuid. */
 const SESSION_ID = /^(?:session-)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
@@ -44,7 +45,14 @@ export class SignedOutError extends Error {
  */
 export function createService({ ctx, config, logger }) {
   const solver = createPowSolver({
-    wasmPath: config.wasmPath,
+    // Resolved on the first challenge: a git/pnpm install arrives without the
+    // module, and it is fetched once into the user's DSH cache.
+    wasmPath: () =>
+      wasm.resolveWasmPath({
+        wasmPath: config.wasmPath,
+        cacheDir: wasm.defaultCacheDir(),
+        warn: (message) => logger.warn(message),
+      }),
     warn: (message) => logger.warn(message),
   });
 

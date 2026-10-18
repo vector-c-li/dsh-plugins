@@ -35,14 +35,18 @@ dsh-plugins/
 
 ## 快速开始
 
-```powershell
-git clone https://github.com/vector-c-li/dsh-plugins.git "$env:USERPROFILE\dsh-plugins"
-node "$env:USERPROFILE\dsh-plugins\plugins\deepseek-web-chat\scripts\fetch-wasm.mjs"
+在 DSH 里打开 **插件 → 添加插件**，粘贴这一行：
+
+```
+github:vector-c-li/dsh-plugins#path:/plugins/deepseek-web-chat
 ```
 
-然后把这个插件注册进你的 DSH profile —— 见
+DSH 会用 pnpm 装好并把它作为组合包启用；刷新页面（侧栏标签页没出现就重启一次），
+从 `+` 菜单打开 **DeepSeek Chat**。工作量证明模块会在首次使用时自动下载，不需要额外准备。
+
+想用本地检出（改代码开发）就先 `git clone`，再按
 [`plugins/deepseek-web-chat/README.zh-CN.md`](plugins/deepseek-web-chat/README.zh-CN.md#安装)（中文）或
-[`README.md`](plugins/deepseek-web-chat/README.md#install)（English）。
+[`README.md`](plugins/deepseek-web-chat/README.md#install)（English）里的步骤注册。
 
 ## 建议的阅读顺序
 

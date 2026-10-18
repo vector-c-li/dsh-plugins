@@ -36,12 +36,17 @@ dsh-plugins/
 
 ## Quick start
 
-```powershell
-git clone https://github.com/vector-c-li/dsh-plugins.git "$env:USERPROFILE\dsh-plugins"
-node "$env:USERPROFILE\dsh-plugins\plugins\deepseek-web-chat\scripts\fetch-wasm.mjs"
+Open **Plugins → Add plugin** in DSH and paste this one line:
+
+```
+github:vector-c-li/dsh-plugins#path:/plugins/deepseek-web-chat
 ```
 
-Then register the plugin with your DSH profile — see
+DSH installs it with pnpm and enables it as a bundle; refresh the page (restart once if the sidebar
+tab is missing) and open **DeepSeek Chat** from the `+` menu. The proof-of-work module is fetched on
+first use, so there is nothing else to download.
+
+Prefer a local checkout (for development)? `git clone` the repo and follow
 [`plugins/deepseek-web-chat/README.md`](plugins/deepseek-web-chat/README.md#install) (English) or
 [`README.zh-CN.md`](plugins/deepseek-web-chat/README.zh-CN.md#安装) (中文).
 

@@ -44,12 +44,33 @@ function allocString(exports, text) {
 /**
  * Create a solver bound to one wasm asset.
  * @param {object} options
- * @param {string} options.wasmPath Absolute path of `sha3_wasm_bg.wasm`.
+ * @param {string | (() => Promise<string>)} options.wasmPath Absolute path of
+ *   `sha3_wasm_bg.wasm`, or a resolver so a download can happen on first use.
  * @param {(message: string) => void} [options.warn]
  */
 export function createPowSolver({ wasmPath, warn = () => {} }) {
   /** Solved answers keyed by the exact challenge payload, with expiry. */
   const cache = new Map();
+
+  // The path is resolved lazily: an install that arrives without the module can
+  // fetch it on the first challenge instead of failing at mount time.
+  let resolvedPath;
+  const resolvePath = async () => {
+    const value = typeof wasmPath === 'function' ? await wasmPath() : wasmPath;
+    if (typeof value !== 'string' || value.length === 0) {
+      throw new Error('deepseek-web-chat: no proof-of-work module path could be resolved');
+    }
+    return value;
+  };
+  const moduleForChallenge = async () => {
+    if (resolvedPath === undefined) {
+      resolvedPath = resolvePath().catch((error) => {
+        resolvedPath = undefined;
+        throw error;
+      });
+    }
+    return loadModule(await resolvedPath);
+  };
 
   /**
    * @param {object} challenge Server payload: algorithm/challenge/salt/difficulty/signature/expire_at/target_path.
@@ -66,7 +87,7 @@ export function createPowSolver({ wasmPath, warn = () => {} }) {
       return cached.header;
     }
 
-    const exports = await loadModule(wasmPath);
+    const exports = await moduleForChallenge();
     const prefix = `${challenge.salt}_${expireAt}_`;
     const retptr = exports.__wbindgen_add_to_stack_pointer(-16) >>> 0;
     let status;

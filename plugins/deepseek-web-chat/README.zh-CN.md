@@ -28,7 +28,30 @@
 
 ## 安装
 
-### 1. 克隆
+### 快路径：把一段 spec 粘进 DSH
+
+打开 DSH 的 **插件 → 添加插件**，粘贴：
+
+```
+github:vector-c-li/dsh-plugins#path:/plugins/deepseek-web-chat
+```
+
+DSH 会读出 spec 指向什么、用 pnpm 装好、并把它作为组合包启用。然后刷新 DSH 页面
+（侧栏标签页没出现就重启一次），从侧边栏 `+` 菜单打开 **DeepSeek Chat**。
+
+同一段 spec 也能在终端用，但命令行只负责装包 —— 装完要在插件页把它启用：
+
+```powershell
+dsh plugin --profile desktop add "github:vector-c-li/dsh-plugins#path:/plugins/deepseek-web-chat"
+```
+
+包括工作量证明模块在内，其余东西都会在首次使用时自动取回（缓存在
+`$DSH_HOME/cache/deepseek-web-chat/`）。想升级就再装一次同一段 spec —— git 安装是一个快照，
+重新安装才会拉到新提交。
+
+### 手动方式（开发用）
+
+#### 1. 克隆
 
 ```powershell
 git clone https://github.com/vector-c-li/dsh-plugins.git "$env:USERPROFILE\dsh-plugins"
@@ -40,18 +63,19 @@ git clone https://github.com/vector-c-li/dsh-plugins.git ~/dsh-plugins
 
 插件位于 `<clone>/plugins/deepseek-web-chat`。
 
-### 2. 取回 PoW 模块
+#### 2. 取回 PoW 模块（可选）
 
-插件不随仓库分发厂商的 WebAssembly 文件（见[第三方资源](#第三方资源)）：
+git 安装会按需自动下载，所以这一步只在离线机器、或者你想让本地检出里就带着它时才需要
+（见[第三方资源](#第三方资源)）：
 
 ```powershell
 node plugins\deepseek-web-chat\scripts\fetch-wasm.mjs
 ```
 
-该脚本从 `fe-static.deepseek.com` 下载 `assets/sha3_wasm_bg.wasm`（约 26 KB）。
-文件缺失就重跑一次 —— 每一次对话请求都要用它解网页版的工作量证明。
+脚本从 `fe-static.deepseek.com` 取 `assets/sha3_wasm_bg.wasm`（约 26 KB）。
+本地没有这份拷贝时，Host 会在第一次挑战时把它下到 `$DSH_HOME/cache/deepseek-web-chat/`。
 
-### 3. 注册到 DSH profile
+#### 3. 注册到 DSH profile
 
 编辑 `$DSH_HOME/profiles/desktop/package.json`（Windows 下是 `C:\Users\<你>\.dsh\profiles\desktop`）：
 
@@ -88,7 +112,7 @@ ln -s ~/dsh-plugins/plugins/deepseek-web-chat ~/.dsh/profiles/desktop/node_modul
 
 重启 DSH（或在 Plugins 页把插件关掉再打开）。
 
-### 4. 验证并登录
+#### 4. 验证并登录
 
 - 打开 `http://127.0.0.1:<dsh 端口>/deepseek-web/`，应看到登录页；
 - 或者刷新 DSH，从侧边栏 `+` 菜单打开 **DeepSeek Chat**。
@@ -130,12 +154,13 @@ ln -s ~/dsh-plugins/plugins/deepseek-web-chat ~/.dsh/profiles/desktop/node_modul
 ## 开发
 
 ```powershell
-node scripts/selftest.mjs      # 接口解析、PoW 求解、上下文拼接（离线）
-node scripts/client-smoke.mjs  # 客户端 bundle 注册 + 插槽注入（假 loader）
-node scripts/route-smoke.mjs   # 用假 ctx 跑 HTTP 面
-node scripts/live-check.mjs    # 对着运行中的 DSH（自签浏览器 cookie）
+node scripts/selftest.mjs              # 接口解析、PoW 求解、上下文拼接（离线）
+node scripts/client-smoke.mjs          # 客户端 bundle 注册 + 插槽注入（假 loader）
+node scripts/route-smoke.mjs           # 用假 ctx 跑 HTTP 面
+node scripts/wasm-fallback-check.mjs   # 没有 assets 的安装：下载一次、之后复用
+node scripts/live-check.mjs            # 对着运行中的 DSH（自签浏览器 cookie）
 node scripts/live-chat.mjs --dsh-session <id>   # 真实提问，打印答案与引用
-node scripts/preview.mjs       # 面板 UI 的静态预览服务
+node scripts/preview.mjs               # 面板 UI 的静态预览服务
 ```
 
 `live-check.mjs` / `live-chat.mjs` 读 `$DSH_WEB_URL`（或 `DSW_ORIGIN`），并用
@@ -168,9 +193,9 @@ node scripts/preview.mjs       # 面板 UI 的静态预览服务
 ## 第三方资源
 
 `assets/sha3_wasm_bg.wasm` 是 DeepSeek 自己的前端模块（来自 `fe-static.deepseek.com`），
-只用来按官方客户端的算法解网页版的工作量证明。仓库**不重新分发**它：
-`scripts/fetch-wasm.mjs` 会把它下载到你的本地检出，`.gitignore` 让提交里始终没有它。
-版权归 DeepSeek。
+只用来按官方客户端的算法解网页版的工作量证明。仓库**不重新分发**它：`.gitignore` 让 `*.wasm`
+不进提交，Host 会在首次使用时把它下到 `$DSH_HOME/cache/deepseek-web-chat/`
+（也可以用 `scripts/fetch-wasm.mjs` 在本地检出里留一份）。版权归 DeepSeek。
 
 ## 许可
 

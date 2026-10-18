@@ -29,7 +29,31 @@ Part of the [`dsh-plugins`](https://github.com/vector-c-li/dsh-plugins) collecti
 
 ## Install
 
-### 1. Clone
+### Fast path: paste one spec into DSH
+
+Open **Plugins → Add plugin** in DSH and paste:
+
+```
+github:vector-c-li/dsh-plugins#path:/plugins/deepseek-web-chat
+```
+
+DSH reads the spec, installs the package with pnpm and enables it as a bundle. Then refresh the DSH
+page (restart once if the tab does not appear) and open **DeepSeek Chat** from the sidebar `+`.
+
+The same spec works from a terminal, but the CLI only installs the package — enable it afterwards in
+the Plugins page:
+
+```powershell
+dsh plugin --profile desktop add "github:vector-c-li/dsh-plugins#path:/plugins/deepseek-web-chat"
+```
+
+Everything else, including the proof-of-work module, is fetched automatically on first use (cached
+under `$DSH_HOME/cache/deepseek-web-chat/`). To upgrade, install the same spec again — a git install
+is a snapshot, so reinstalling is what pulls a newer commit.
+
+### Manual path (for development)
+
+#### 1. Clone
 
 ```powershell
 git clone https://github.com/vector-c-li/dsh-plugins.git "$env:USERPROFILE\dsh-plugins"
@@ -41,18 +65,19 @@ git clone https://github.com/vector-c-li/dsh-plugins.git ~/dsh-plugins
 
 The plugin lives at `<clone>/plugins/deepseek-web-chat`.
 
-### 2. Fetch the PoW module
+#### 2. Fetch the PoW module (optional)
 
-The plugin ships without the vendor's WebAssembly blob (see [Third-party assets](#third-party-assets)):
+A git install downloads the module on demand, so this step is only needed for an offline machine or
+if you want the copy checked in your checkout (see [Third-party assets](#third-party-assets)):
 
 ```powershell
 node plugins\deepseek-web-chat\scripts\fetch-wasm.mjs
 ```
 
-It downloads `assets/sha3_wasm_bg.wasm` (~26 KB) from `fe-static.deepseek.com`. Re-run it if the
-file is missing — every request to the web chat needs it to solve the site's proof-of-work.
+It writes `assets/sha3_wasm_bg.wasm` (~26 KB) from `fe-static.deepseek.com`. Without a local copy the
+Host downloads it once into `$DSH_HOME/cache/deepseek-web-chat/` on the first challenge.
 
-### 3. Register it with your DSH profile
+#### 3. Register it with your DSH profile
 
 Edit `$DSH_HOME/profiles/desktop/package.json` (on Windows `C:\Users\<you>\.dsh\profiles\desktop`):
 
@@ -89,7 +114,7 @@ Finally add the host row to `$DSH_HOME/profiles/desktop/cordis.patch.yml`:
 
 Restart DSH (or toggle the plugin off/on in the Plugins page).
 
-### 4. Verify, then sign in
+#### 4. Verify, then sign in
 
 - Open `http://127.0.0.1:<dsh port>/deepseek-web/` — you should get the sign-in page;
 - Or refresh DSH and open the **DeepSeek Chat** tab from the sidebar `+` menu.
@@ -131,12 +156,13 @@ are collapsed into a one-line tally, so long agentic transcripts stay readable.
 ## Development
 
 ```powershell
-node scripts/selftest.mjs      # API parsing, PoW solver, context builder (offline)
-node scripts/client-smoke.mjs  # bundle registration + slot injection (fake loader)
-node scripts/route-smoke.mjs   # HTTP surface on a fake ctx
-node scripts/live-check.mjs    # against a running DSH (mints a browser cookie)
+node scripts/selftest.mjs              # API parsing, PoW solver, context builder (offline)
+node scripts/client-smoke.mjs          # bundle registration + slot injection (fake loader)
+node scripts/route-smoke.mjs           # HTTP surface on a fake ctx
+node scripts/wasm-fallback-check.mjs   # install without assets: download + reuse the module
+node scripts/live-check.mjs            # against a running DSH (mints a browser cookie)
 node scripts/live-chat.mjs --dsh-session <id>   # real answer, prints text + citations
-node scripts/preview.mjs       # static preview server for the panel UI
+node scripts/preview.mjs               # static preview server for the panel UI
 ```
 
 `live-check.mjs` and `live-chat.mjs` read `$DSH_WEB_URL` (or `DSW_ORIGIN`) and mint the browser
@@ -175,8 +201,9 @@ the `?v=` query in the row (or the plugin id) and toggle the plugin off/on — s
 
 `assets/sha3_wasm_bg.wasm` is DeepSeek's own front-end module (from `fe-static.deepseek.com`), used
 solely to solve the site's proof-of-work the way the official client does. It is **not** redistributed
-here: `scripts/fetch-wasm.mjs` downloads it into your checkout and `.gitignore` keeps it out of
-commits. Copyright remains with DeepSeek.
+here: `.gitignore` keeps `*.wasm` out of commits, and the Host downloads it on first use into
+`$DSH_HOME/cache/deepseek-web-chat/` (or you can run `scripts/fetch-wasm.mjs` to keep a copy in the
+checkout). Copyright remains with DeepSeek.
 
 ## Licence
 

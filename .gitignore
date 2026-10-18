@@ -11,17 +11,17 @@ Thumbs.db
 cache/
 data/
 
-# Local dev leftovers
+# Local dev leftovers and scratch files (never in a commit, never in history)
 .tmp-*/
 tmp/
 *.local.*
 preview.log
 preview.err
+*.tmp
+.commit-msg
+.commitmsg.tmp
+.research/
 
 # The vendor proof-of-work module is downloaded, not distributed.
 # Get it with: node plugins/deepseek-web-chat/scripts/fetch-wasm.mjs
 *.wasm
-
-# scratch files
-*.tmp
-.commitmsg.tmp
